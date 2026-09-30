@@ -1,8 +1,8 @@
 # Architecture
 
 The installed package lives under `src/mufsi/`. The repository name is `muFSI`;
-the Python import name is `mufsi`. This skeleton reserves interfaces for the
-rewrite; it contains no numerical solver implementation.
+the Python import name is `mufsi`. The isotropic plate and in-vacuo eigen solver
+are implemented; the remaining skeleton reserves interfaces for the rewrite.
 
 ## Responsibilities and interfaces
 
@@ -72,9 +72,11 @@ operator. Its future `frequency_response(frequencies, load)` method accepts Hz
 and an explicit driving load. The lower-level `FrequencyResponseSolver` handles
 conversion to angular frequency and orchestration at each frequency.
 
-The initial `EigenSolver` represents the in-vacuo structural generalized
-eigenproblem. A fluid-loaded eigenproblem with frequency-dependent hydrodynamics
-is a separate task and is not represented as an ordinary structural eigensolve.
+`EigenSolver` solves the in-vacuo structural generalized eigenproblem using
+SLEPc, eliminating supported displacement DOFs from both matrices and returning
+mass-normalized DOLFINx functions and residual errors. See
+[the plate guide](plate_eigenproblem.md). A fluid-loaded eigenproblem with
+frequency-dependent hydrodynamics requires a separate formulation.
 
 ## Public and internal code
 

@@ -1,9 +1,10 @@
 # µFSI
 
 Viscous fluid-structure interaction for micro- and nanomechanical resonators.
-This repository contains the skeleton for the µFSI v3 rewrite and its planned
-SoftwareX examples. Numerical algorithms are not implemented yet: their entry
-points raise `NotImplementedError` with the intended next step.
+This repository contains the µFSI v3 rewrite and its planned SoftwareX examples.
+The isotropic DOLFINx Kirchhoff–Love plate and in-vacuo SLEPc eigen solver are
+implemented. Fluid models, coupled response, and other planned numerical
+components remain explicit `NotImplementedError` placeholders.
 
 ## Repository layout
 
@@ -85,9 +86,9 @@ With Python 3.11 or newer, install the package from this repository:
 python -m pip install -e ".[dev]"
 ```
 
-The skeleton can be imported without NumPy, SciPy, PETSc, or DOLFINx. Dependencies
-and their supported versions will be added as each numerical component is
-implemented. Installing this skeleton does not provide a simulation environment.
+Numerical backend imports are deferred until they are used. NumPy is a package
+dependency; the plate workflow additionally needs a matched DOLFINx/PETSc/SLEPc
+environment. Installing µFSI alone does not install that scientific runtime.
 
 The geometry and physical parameter containers can already be constructed:
 
@@ -100,10 +101,12 @@ fluid = Fluid(density=997.0, dynamic_viscosity=890e-6)
 ```
 
 These containers currently store data; input validation is a later step.
-The solver classes and grid factories define proposed signatures but cannot yet
-run simulations. Files under `examples/` and `benchmarks/` are documented
-placeholders. The `tests/` tree reserves space for future tests and reference
-data; no numerical validation has been carried out for the new implementation.
+The plate eigen workflow is described in [the plate guide](docs/plate_eigenproblem.md).
+Run `examples/plate_eigenvalue_problem.py` inside the scientific environment to
+print eigenfrequencies and export mode shapes; `--plot` saves a mode-shape figure.
+It uses the same silicon plate geometry and material as the old Example_1 notebook.
+The other example and benchmark files remain placeholders. Tests now cover
+plate input validation and analytical structural/eigenproblem checks.
 
 Only `src/mufsi/` is included in the installed package. The public API is exposed
 through `mufsi.__init__` and remains provisional during the rewrite.

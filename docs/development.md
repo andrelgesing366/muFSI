@@ -2,15 +2,18 @@
 
 ## Current state
 
-This is an importable package skeleton. Physical input/result containers and
-class signatures exist. Numerical methods, grid factories, postprocessing, and
-I/O explicitly raise `NotImplementedError`. `Fluid.kinematic_viscosity` is a
-simple derived data property. Physical input validation is not implemented yet.
+The isotropic DOLFINx plate implements mesh/space construction, bending/mass
+assembly, support constraints, and distributed pressure loads. The SLEPc
+eigen solver and `examples/plate_eigenvalue_problem.py` implement the first
+complete structural workflow. Fluid models, coupling, postprocessing, and I/O
+remain placeholders. Plate/solver controls are validated; standalone physical
+containers still only store their data.
 
 Python 3.11 is the initial minimum and `3.0.0.dev0` is a development version.
-The skeleton has no third-party runtime dependencies. Add numerical packages
-and supported version ranges when their first implementation is introduced.
-DOLFINx/PETSc/SLEPc environment setup will be documented and verified separately.
+NumPy is a runtime dependency. Install DOLFINx/PETSc/SLEPc together in the
+scientific environment, as described in [the plate guide](plate_eigenproblem.md).
+Matplotlib is optional through the `plot` extra. Add other numerical dependencies
+when their implementations are introduced.
 
 ## Suggested implementation sequence
 
@@ -42,10 +45,10 @@ python -m pytest
 python -m ruff check src examples benchmarks
 ```
 
-Currently `tests/` contains only directories and planning notes. Running pytest
-will report that no tests were collected; that is not numerical validation.
-Until implementations exist, checking syntax and importing every package module
-is sufficient to verify the scaffold itself.
+The structural and eigen tests use `unittest` and can also be collected by
+pytest. Pure input tests run without FEM libraries; numerical tests skip if
+the scientific environment is unavailable. See the plate guide for test cases
+and run instructions. Skipped tests do not count as numerical validation.
 
 Add unit tests with their implementation. Integration tests should state their
 scientific-environment requirements. Regression fixtures must have traceable

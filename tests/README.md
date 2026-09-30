@@ -1,7 +1,10 @@
-# Planned tests
+# Tests and planned coverage
 
-The folders mirror the library boundaries. No tests or expected numerical
-results have been added yet.
+The folders mirror the library boundaries. `structure/test_kirchhoff.py` and
+`solvers/test_eigen.py` cover input validation, analytical plate/beam frequencies,
+convergence, physical scaling, matrix symmetry, pressure assembly, constraints,
+and modal mass orthogonality. FEM tests require DOLFINx/PETSc/SLEPc; they skip
+when those libraries are unavailable. No old-code regression data is stored yet.
 
 - `models/`: input validation, units, and derived physical properties.
 - `structure/`: assembly, boundary conditions, point/distributed loads, and
@@ -16,5 +19,6 @@ results have been added yet.
 - `data/regression/`: selected reference outputs with environment, generation
   instructions, provenance, units, and tolerances.
 
-Add tests as numerical components are implemented. Use the `integration` marker
-for tests needing DOLFINx and the `regression` marker for reference comparisons.
+Add tests as numerical components are implemented. The current tests use
+`unittest`, so they run without pytest and are also collected by it. A skipped
+scientific test is not a passing numerical check.

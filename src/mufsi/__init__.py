@@ -10,6 +10,7 @@ from mufsi.hydrodynamics.stokes_3d import Stokes3D
 from mufsi.models.fluid import Fluid
 from mufsi.models.geometry import BeamGeometry, PlateGeometry
 from mufsi.models.material import Material
+from mufsi.solvers.eigen import EigenResult, EigenSolver
 from mufsi.solvers.problem import CoupledProblem
 from mufsi.structure.euler_bernoulli import EulerBernoulliBeam
 from mufsi.structure.kirchhoff import KirchhoffPlate
@@ -21,6 +22,8 @@ __all__ = [
     "CouplingOperator",
     "DistributedLoad",
     "EulerBernoulliBeam",
+    "EigenResult",
+    "EigenSolver",
     "Fluid",
     "FluidGrid",
     "KirchhoffPlate",

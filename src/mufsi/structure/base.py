@@ -23,6 +23,15 @@ class StructuralModel(ABC):
         """Return the FEM space used for structural displacement."""
         raise NotImplementedError("Structural function-space setup is pending.")
 
+    @property
+    def constrained_dofs(self) -> Any:
+        """Local zero-displacement DOFs, including ghosts.
+
+        Matrices use the full DOF space; solvers eliminate constraints from
+        both operators rather than introducing arbitrary diagonal entries.
+        """
+        raise NotImplementedError("The model must identify constrained DOFs.")
+
     @abstractmethod
     def stiffness_matrix(self) -> Any:
         """Assemble the structural stiffness matrix K."""

@@ -10,12 +10,12 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-# Add numerical dependencies when their implementations and supported versions
-# have been established. The initial skeleton uses only the standard library.
-dependencies = []
+# Install DOLFINx/PETSc/SLEPc together in the scientific environment.
+dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+plot = ["matplotlib>=3.8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
