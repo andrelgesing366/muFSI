@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 class CoupledProblem:
     """Combine structural, hydrodynamic, and coupling components.
 
-    An omitted coupling operator will eventually be constructed from the
-    structure and fluid grid. No assembly occurs in this skeleton constructor.
+    An omitted coupling operator is constructed lazily from the structure and
+    fluid grid when solving. No assembly occurs in the constructor.
     """
 
     structure: StructuralModel
@@ -31,6 +31,8 @@ class CoupledProblem:
     ) -> FrequencyResponseResult:
         """Solve a driven response at frequencies in Hz using an explicit load.
 
-        TODO: construct coupling if needed and delegate to FrequencyResponseSolver.
+        Delegates assembly and solution to FrequencyResponseSolver.
         """
-        raise NotImplementedError("The coupled frequency-response workflow is pending.")
+        from mufsi.solvers.frequency_response import FrequencyResponseSolver
+
+        return FrequencyResponseSolver(self).solve(frequencies, load)

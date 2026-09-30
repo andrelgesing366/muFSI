@@ -5,12 +5,14 @@
 The isotropic DOLFINx plate implements mesh/space construction, bending/mass
 assembly, support constraints, and distributed pressure loads. The SLEPc
 eigen solver and `examples/plate_eigenvalue_problem.py` implement the first
-complete structural workflow. Fluid models, coupling, postprocessing, and I/O
-remain placeholders. Plate/solver controls are validated; standalone physical
+complete structural workflow. F2D, the Sader reference, sparse basis transfer,
+SciPy LU, and coupled frequency response are also implemented; see
+[the fluid guide](f2d_spectrum.md). 3D fluid, beam FEM, postprocessing, and generic
+I/O remain placeholders. Plate/fluid/solver controls are validated; physical
 containers still only store their data.
 
 Python 3.11 is the initial minimum and `3.0.0.dev0` is a development version.
-NumPy is a runtime dependency. Install DOLFINx/PETSc/SLEPc together in the
+NumPy and SciPy are runtime dependencies. Install DOLFINx/PETSc/SLEPc in the
 scientific environment, as described in [the plate guide](plate_eigenproblem.md).
 Matplotlib is optional through the `plot` extra. Add other numerical dependencies
 when their implementations are introduced.
@@ -38,15 +40,15 @@ Install development tools in a suitable Python environment:
 python -m pip install -e ".[dev]"
 ```
 
-Once meaningful tests are added:
+Run the tests:
 
 ```console
 python -m pytest
 python -m ruff check src examples benchmarks
 ```
 
-The structural and eigen tests use `unittest` and can also be collected by
-pytest. Pure input tests run without FEM libraries; numerical tests skip if
+The tests use `unittest` and can also be collected by
+pytest. Fluid/Sader and input tests run without FEM libraries; FEM tests skip if
 the scientific environment is unavailable. See the plate guide for test cases
 and run instructions. Skipped tests do not count as numerical validation.
 

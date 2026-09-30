@@ -26,7 +26,8 @@ class HydrodynamicModel(ABC):
     def assemble_matrix(self, omega: float) -> Any:
         """Optionally assemble the fluid system matrix for inspection.
 
-        Coupled solvers must not require this method. Normalization and signs
-        will be specified when the kernel is validated against the reference.
+        Generic coupled solvers do not require this method. Stokes2D provides
+        the sparse block mobility v = B p for an accelerated block solve;
+        other implementations must document their own normalization.
         """
         raise NotImplementedError("Explicit fluid matrix assembly is unavailable.")

@@ -3,8 +3,9 @@
 Viscous fluid-structure interaction for micro- and nanomechanical resonators.
 This repository contains the µFSI v3 rewrite and its planned SoftwareX examples.
 The isotropic DOLFINx Kirchhoff–Love plate and in-vacuo SLEPc eigen solver are
-implemented. Fluid models, coupled response, and other planned numerical
-components remain explicit `NotImplementedError` placeholders.
+implemented, together with the F2D fluid formulation, sparse plate/fluid
+coupling, driven response, and Sader reference. The 3D fluid, beam FEM,
+postprocessing, and generic I/O components remain placeholders.
 
 ## Repository layout
 
@@ -31,6 +32,7 @@ muFSI/
 │       │   ├── quadrature.py
 │       │   ├── stokeslet.py
 │       │   ├── stokes_2d.py
+│       │   ├── sader.py
 │       │   ├── stokes_3d.py
 │       │   └── kernels.py
 │       ├── coupling/
@@ -48,8 +50,8 @@ muFSI/
 │       └── io/
 │           ├── config.py
 │           └── results.py
-├── tests/                 # Future unit, integration, and regression tests
-├── examples/              # Future user workflows and SoftwareX examples
+├── tests/                 # Unit, integration, and analytical regression tests
+├── examples/              # Plate eigen and F2D/Sader workflows
 ├── benchmarks/            # Future accuracy, runtime, and memory studies
 ├── docs/                  # Architecture and development notes
 └── research/              # Experiments outside the installed package
@@ -69,8 +71,8 @@ Each package folder contains an `__init__.py`. The existing root-level
 - `postprocessing`: resonance/Q extraction, mode evaluation, and flow recovery.
 - `io`: configuration and result persistence.
 
-The structural and coupling implementations will own the DOLFINx interaction.
-The fluid layer will operate on numerical arrays independently of DOLFINx.
+The structural and coupling implementations own the DOLFINx interaction.
+The fluid layer operates on numerical arrays independently of DOLFINx.
 The primary fluid interface is `pressure_from_velocity(omega, velocity)`;
 dense matrix assembly is optional. Linear algebra backends will remain separate
 from the physics. CPU execution is the initial target.
@@ -78,7 +80,7 @@ from the physics. CPU execution is the initial target.
 See [the architecture notes](docs/architecture.md) for the interfaces and
 [the development notes](docs/development.md) for the implementation sequence.
 
-## Working with the skeleton
+## Running the library
 
 With Python 3.11 or newer, install the package from this repository:
 
@@ -86,8 +88,8 @@ With Python 3.11 or newer, install the package from this repository:
 python -m pip install -e ".[dev]"
 ```
 
-Numerical backend imports are deferred until they are used. NumPy is a package
-dependency; the plate workflow additionally needs a matched DOLFINx/PETSc/SLEPc
+FEM backend imports are deferred until they are used. NumPy and SciPy are package
+dependencies; the eigen workflow needs a matched DOLFINx/PETSc/SLEPc
 environment. Installing µFSI alone does not install that scientific runtime.
 
 The geometry and physical parameter containers can already be constructed:
@@ -105,8 +107,15 @@ The plate eigen workflow is described in [the plate guide](docs/plate_eigenprobl
 Run `examples/plate_eigenvalue_problem.py` inside the scientific environment to
 print eigenfrequencies and export mode shapes; `--plot` saves a mode-shape figure.
 It uses the same silicon plate geometry and material as the old Example_1 notebook.
-The other example and benchmark files remain placeholders. Tests now cover
-plate input validation and analytical structural/eigenproblem checks.
+The F2D/Sader workflow is described in [the fluid guide](docs/f2d_spectrum.md).
+Run `examples/cantilever_2d.py` in the scientific environment to compare the
+full 200-frequency spectrum and export complex fields, CSV data, and a plot.
+`--quick` uses a smaller grid and mesh. Coupled fluid solves currently use one
+MPI rank. Install the `plot` extra for plotting.
+
+Other examples and benchmarks remain placeholders. Tests cover structural
+analytical results, the F2D kernel, Sader compliance, basis transfer, virtual
+work, and the coupled block solve.
 
 Only `src/mufsi/` is included in the installed package. The public API is exposed
 through `mufsi.__init__` and remains provisional during the rewrite.

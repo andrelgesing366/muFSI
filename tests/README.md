@@ -4,7 +4,12 @@ The folders mirror the library boundaries. `structure/test_kirchhoff.py` and
 `solvers/test_eigen.py` cover input validation, analytical plate/beam frequencies,
 convergence, physical scaling, matrix symmetry, pressure assembly, constraints,
 and modal mass orthogonality. FEM tests require DOLFINx/PETSc/SLEPc; they skip
-when those libraries are unavailable. No old-code regression data is stored yet.
+when those libraries are unavailable. The hydrodynamics tests cover the old
+Kelvin formula, batch pressure solves, Sader rigid-section impedance, uniform
+beam compliance, and its exact static limit. Coupling tests check basis values
+against DOLFINx, virtual work, and block/dense eliminated response agreement.
+The coupled F2D implementation is currently serial; those tests skip under MPI.
+No old-code regression data is stored yet.
 
 - `models/`: input validation, units, and derived physical properties.
 - `structure/`: assembly, boundary conditions, point/distributed loads, and

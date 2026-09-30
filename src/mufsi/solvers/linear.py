@@ -1,8 +1,4 @@
-"""Linear solver interfaces shared by numerical models.
-
-TODO: implement SciPy LU and PETSc backends with repeated/blocked right-hand
-sides. Import backend libraries only when the corresponding backend is used.
-"""
+"""Reusable SciPy LU and a reserved PETSc solver interface."""
 
 from abc import ABC, abstractmethod
 from typing import Any
@@ -23,15 +19,35 @@ class LinearSolver(ABC):
 
 
 class SciPyLUSolver(LinearSolver):
-    """Placeholder for a reusable SciPy LU factorization."""
+    """Reusable dense or sparse SciPy LU, including complex systems."""
 
     def factorize(self, matrix: Any) -> None:
         """Prepare an LU factorization for subsequent solves."""
-        raise NotImplementedError("SciPy LU factorization is pending.")
+        import numpy as np
+        from scipy import linalg, sparse
+        from scipy.sparse.linalg import splu
+
+        self._sparse = sparse.issparse(matrix)
+        if matrix.shape[0] != matrix.shape[1]:
+            raise ValueError("LU requires a square matrix.")
+        if self._sparse:
+            self._factors = splu(matrix.astype(np.complex128).tocsc())
+        else:
+            a = np.asarray(matrix, dtype=np.complex128)
+            if not np.isfinite(a).all():
+                raise ValueError("LU matrix must be finite.")
+            self._factors = linalg.lu_factor(a)
 
     def solve(self, rhs: Any) -> Any:
         """Solve using the stored LU factors."""
-        raise NotImplementedError("The SciPy linear solve is pending.")
+        from scipy.linalg import lu_solve
+
+        if not hasattr(self, "_factors"):
+            raise RuntimeError("Call factorize before solve.")
+        return (
+            self._factors.solve(rhs) if self._sparse
+            else lu_solve(self._factors, rhs)
+        )
 
 
 class PETScSolver(LinearSolver):

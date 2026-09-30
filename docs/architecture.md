@@ -2,7 +2,8 @@
 
 The installed package lives under `src/mufsi/`. The repository name is `muFSI`;
 the Python import name is `mufsi`. The isotropic plate and in-vacuo eigen solver
-are implemented; the remaining skeleton reserves interfaces for the rewrite.
+are implemented, together with F2D, Sader, and serial coupled response.
+Other skeleton components reserve interfaces for the rewrite.
 
 ## Responsibilities and interfaces
 
@@ -17,10 +18,10 @@ are implemented; the remaining skeleton reserves interfaces for the rewrite.
 | `io` | Validated configuration and result storage | `read_config`, `save_results`, `load_results` |
 
 The models contain data and elementary derived properties. The structure layer
-will handle DOLFINx assembly. The coupling layer will use DOLFINx/Basix only to
+handles DOLFINx assembly. The coupling layer uses DOLFINx/Basix only to
 build the basis-evaluation operator. Once built, the coupling operator and the
 fluid models will work with arrays and sparse matrices. Optional numerical
-libraries must be loaded at the point of use rather than during package import.
+FEM libraries are loaded on use; NumPy and SciPy are runtime dependencies.
 
 ## Coupling contract
 
@@ -30,16 +31,16 @@ fluid collocation points:
 ```text
 E[i, j] = phi_j(x_i)
 fluid motion = E @ u
-structural force = E.T @ (weights * pressure)
+resisting force = E.T @ (weights * pressure)
 ```
 
-The basis-evaluation routine will locate structural cells, map physical points
-to reference coordinates, evaluate basis functions, and assign the correct
-global columns. It will not construct a second FEM mesh for the fluid grid.
+The basis-evaluation routine locates cells, maps physical points to reference
+coordinates, and evaluates scalar basis functions. It builds columns in serial
+structural DOF order, without a second FEM mesh.
 
-Point ordering, constrained DOFs, points on cell boundaries, pressure signs,
-and MPI ownership must be documented and validated with this implementation.
-The current skeleton describes the scalar transverse plate problem; beam/fluid
+Point ordering, constraints, boundary-point behavior, and pressure signs are
+specified in [the F2D guide](f2d_spectrum.md). Coupling currently requires one
+MPI rank. The implemented coupling describes transverse plate motion; beam/fluid
 mapping details will be defined before adding a coupled beam example.
 
 ## Fluid contract
@@ -51,13 +52,14 @@ pressure = hydrodynamics.pressure_from_velocity(omega, velocity)
 ```
 
 `omega` is angular frequency in rad/s, velocity is in m/s, and pressure is in Pa.
-Velocity, pressure, and weights share the fluid grid ordering. Kernel signs and
-normalization will be checked against the reference implementation before this
-contract becomes stable.
+Velocity, pressure, and weights share x-major grid ordering. Positive pressure
+is resisting traction with exp(+i omega t). Stokes2D is validated against the
+old Kelvin formula and Sader rigid-section impedance.
 
 `assemble_matrix(omega)` is an optional inspection method. The coupled problem
-must work through the fluid action rather than require a dense hydrodynamic
-matrix. Backends may reuse factorizations, process multiple right-hand sides in
+can use the fluid action without requiring a dense hydrodynamic matrix.
+F2D additionally provides a sparse mobility for a displacement/pressure block
+solve. Backends may reuse factorizations and process multiple right-hand sides in
 blocks, or support iterative/operator approaches. Dense assembly can still be a
 useful reference for small problems. Explicit matrix inversion is unnecessary.
 
@@ -68,7 +70,7 @@ coupled problem or the frequency-response workflow.
 ## Coupled and eigen solvers
 
 `CoupledProblem` stores the structure, hydrodynamics, and an optional coupling
-operator. Its future `frequency_response(frequencies, load)` method accepts Hz
+operator. Its `frequency_response(frequencies, load)` method accepts Hz
 and an explicit driving load. The lower-level `FrequencyResponseSolver` handles
 conversion to angular frequency and orchestration at each frequency.
 
