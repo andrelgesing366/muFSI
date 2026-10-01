@@ -5,17 +5,21 @@
 The isotropic DOLFINx plate implements mesh/space construction, bending/mass
 assembly, support constraints, and distributed pressure loads. The SLEPc
 eigen solver and `examples/plate_eigenvalue_problem.py` implement the first
-complete structural workflow. F2D, the Sader reference, sparse basis transfer,
-SciPy LU, and coupled frequency response are also implemented; see
-[the fluid guide](f2d_spectrum.md). 3D fluid, beam FEM, postprocessing, and generic
-I/O remain placeholders. Plate/fluid/solver controls are validated; physical
+complete structural workflow. F2D, adaptive F3D, the Sader reference, sparse
+basis transfer, SciPy LU, and coupled frequency response are also implemented; see
+[the F2D guide](f2d_spectrum.md) and [the F3D guide](f3d_spectrum.md).
+The Euler-Bernoulli beam, beam eigen example, and local Sader/Tuck loading
+are implemented; see [the beam guide](beam_cantilever.md). Postprocessing
+and generic I/O remain placeholders.
+Plate/fluid/solver controls are validated; physical
 containers still only store their data.
 
 Python 3.11 is the initial minimum and `3.0.0.dev0` is a development version.
 NumPy and SciPy are runtime dependencies. Install DOLFINx/PETSc/SLEPc in the
 scientific environment, as described in [the plate guide](plate_eigenproblem.md).
-Matplotlib is optional through the `plot` extra. Add other numerical dependencies
-when their implementations are introduced.
+Matplotlib is optional through the `plot` extra. The optional `quadpy` extra
+provides the legacy cubature backend; the NumPy Gauss backend needs no extra.
+See the F3D guide for runtime and dependency details.
 
 ## Suggested implementation sequence
 

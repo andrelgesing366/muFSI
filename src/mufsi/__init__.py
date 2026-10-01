@@ -2,15 +2,25 @@
 
 from mufsi.coupling.operator import CouplingOperator
 from mufsi.hydrodynamics.grid import FluidGrid
+from mufsi.hydrodynamics.panel_quadrature import (
+    IntegrationReport,
+    QuadratureConvergenceError,
+)
+from mufsi.hydrodynamics.sader import SaderMethod, gamma_function
+from mufsi.hydrodynamics.section_force import SectionForce2D
 from mufsi.hydrodynamics.stokes_2d import Stokes2D
 from mufsi.hydrodynamics.stokes_3d import Stokes3D
-from mufsi.hydrodynamics.sader import SaderMethod, gamma_function
 from mufsi.models.fluid import Fluid
 from mufsi.models.geometry import BeamGeometry, PlateGeometry
 from mufsi.models.material import Material
+from mufsi.solvers.beam_frequency_response import (
+    BeamFrequencyResponseResult,
+    BeamFrequencyResponseSolver,
+)
 from mufsi.solvers.eigen import EigenResult, EigenSolver
 from mufsi.solvers.frequency_response import (
-    FrequencyResponseResult, FrequencyResponseSolver,
+    FrequencyResponseResult,
+    FrequencyResponseSolver,
 )
 from mufsi.solvers.problem import CoupledProblem
 from mufsi.structure.euler_bernoulli import EulerBernoulliBeam
@@ -18,23 +28,28 @@ from mufsi.structure.kirchhoff import KirchhoffPlate
 from mufsi.structure.loads import DistributedLoad, PointLoad
 
 __all__ = [
+    "BeamFrequencyResponseResult",
+    "BeamFrequencyResponseSolver",
     "BeamGeometry",
     "CoupledProblem",
     "CouplingOperator",
     "DistributedLoad",
-    "EulerBernoulliBeam",
     "EigenResult",
     "EigenSolver",
+    "EulerBernoulliBeam",
     "Fluid",
     "FluidGrid",
     "FrequencyResponseResult",
     "FrequencyResponseSolver",
+    "IntegrationReport",
     "KirchhoffPlate",
     "Material",
     "PlateGeometry",
     "PointLoad",
+    "QuadratureConvergenceError",
     "SaderMethod",
-    "gamma_function",
+    "SectionForce2D",
     "Stokes2D",
     "Stokes3D",
+    "gamma_function",
 ]

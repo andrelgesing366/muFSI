@@ -8,8 +8,20 @@ when those libraries are unavailable. The hydrodynamics tests cover the old
 Kelvin formula, batch pressure solves, Sader rigid-section impedance, uniform
 beam compliance, and its exact static limit. Coupling tests check basis values
 against DOLFINx, virtual work, and block/dense eliminated response agreement.
-The coupled F2D implementation is currently serial; those tests skip under MPI.
+F3D tests also check the legacy Stokeslet, steady/unsteady singular integrals,
+adaptive refinement and failure limits, Quadpy/Gauss agreement, symmetry and
+odd grid counts, positive rigid dissipation, and the slender F2D limit. Its
+coupled Schur solve is checked against a separate joint dense solve, including
+a singular in-vacuo stiffness fallback. Coupled F2D/F3D implementations are
+currently serial; those FEM tests skip under MPI.
 No old-code regression data is stored yet.
+
+Beam tests check exact cantilever/bridge/simply-supported spectra, mesh
+convergence, physical scaling, consistent modal mass, line-load units, static
+point/distributed compliance and point-load virtual work. Local-force tests
+compare the Tuck force with the legacy cosine-panel formula and Sader loading;
+beam response is checked against analytical Sader fields. Beam structural
+checks support MPI; driven beam response and arbitrary point loads are serial.
 
 - `models/`: input validation, units, and derived physical properties.
 - `structure/`: assembly, boundary conditions, point/distributed loads, and

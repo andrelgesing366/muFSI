@@ -1,9 +1,9 @@
 """Input checks plus independent plate/beam and assembly checks."""
 
-from dataclasses import FrozenInstanceError, replace
 import importlib.util
 import math
 import unittest
+from dataclasses import FrozenInstanceError, replace
 
 from mufsi import DistributedLoad, EigenSolver, KirchhoffPlate, Material, PlateGeometry
 

@@ -13,8 +13,16 @@ from pathlib import Path
 import numpy as np
 
 from mufsi import (
-    CoupledProblem, DistributedLoad, Fluid, FluidGrid, FrequencyResponseSolver,
-    KirchhoffPlate, Material, PlateGeometry, SaderMethod, Stokes2D,
+    CoupledProblem,
+    DistributedLoad,
+    Fluid,
+    FluidGrid,
+    FrequencyResponseSolver,
+    KirchhoffPlate,
+    Material,
+    PlateGeometry,
+    SaderMethod,
+    Stokes2D,
 )
 from mufsi.coupling.basis_evaluation import build_evaluation_matrix
 

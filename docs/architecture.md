@@ -2,8 +2,10 @@
 
 The installed package lives under `src/mufsi/`. The repository name is `muFSI`;
 the Python import name is `mufsi`. The isotropic plate and in-vacuo eigen solver
-are implemented, together with F2D, Sader, and serial coupled response.
-Other skeleton components reserve interfaces for the rewrite.
+are implemented, together with F2D, adaptive F3D, Sader, and serial coupled
+response.
+Euler-Bernoulli beam assembly and local Sader/Tuck line-force response are also
+implemented. Other skeleton components reserve interfaces for the rewrite.
 
 ## Responsibilities and interfaces
 
@@ -22,6 +24,13 @@ handles DOLFINx assembly. The coupling layer uses DOLFINx/Basix only to
 build the basis-evaluation operator. Once built, the coupling operator and the
 fluid models will work with arrays and sparse matrices. Optional numerical
 FEM libraries are loaded on use; NumPy and SciPy are runtime dependencies.
+
+`SectionForce2D` is the local beam variant of the fluid layer. It returns
+resisting force per unit length using rigid transverse motion, with either
+Sader or numerical Tuck loading. `BeamFrequencyResponseSolver` projects that
+force with the consistent beam line-integration matrix. It has a line-force
+contract rather than the plate pressure-grid contract below; see
+[the beam guide](beam_cantilever.md).
 
 ## Coupling contract
 
@@ -59,8 +68,12 @@ old Kelvin formula and Sader rigid-section impedance.
 `assemble_matrix(omega)` is an optional inspection method. The coupled problem
 can use the fluid action without requiring a dense hydrodynamic matrix.
 F2D additionally provides a sparse mobility for a displacement/pressure block
-solve. Backends may reuse factorizations and process multiple right-hand sides in
-blocks, or support iterative/operator approaches. Dense assembly can still be a
+solve. F3D assembles dense mobility with adaptive regular/singular panel
+integration and uses an exact fluid Schur solve, processing structural RHSs
+in bounded batches. See [the F3D guide](f3d_spectrum.md) for its tolerance,
+grid, memory, and Quadpy/Gauss backends. Backends may reuse factorizations and
+process multiple right-hand sides in blocks, or support iterative/operator
+approaches. Dense assembly can still be a
 useful reference for small problems. Explicit matrix inversion is unnecessary.
 
 The `LinearSolver` abstraction lives in `solvers/linear.py` and can be shared by
@@ -84,8 +97,10 @@ frequency-dependent hydrodynamics requires a separate formulation.
 
 The provisional convenience API is listed in `mufsi.__all__`. Specialist
 interfaces remain accessible through their modules. Internal panel-integral
-functions in `hydrodynamics/kernels.py` use leading underscores so the numerical
-implementation can evolve without making them part of the convenience API.
+functions in `hydrodynamics/stokeslet.py` and `panel_quadrature.py` use leading
+underscores so the numerical implementation can evolve without making them
+part of the convenience API.
+`kernels.py` reserves future general analytical panel reductions.
 
 Only the library package is installed. Tests, examples, benchmarks, and research
 scripts remain outside it. Production code must never import from `research/`.

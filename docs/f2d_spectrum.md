@@ -87,7 +87,7 @@ A generic matrix-free path accepts hydrodynamic models that implement only
 `FrequencyResponseResult` holds frequency-first complex displacement/pressure
 arrays in the full structural/grid order, with fixed displacement entries zero.
 `relative_errors` measures force balance divided by the applied force norm;
-`fluid_errors` measures no-slip divided by the velocity norm for F2D, and is
+`fluid_errors` measures no-slip divided by the velocity norm for F2D/F3D, and is
 NaN for action-only models.
 
 ## Sader reference

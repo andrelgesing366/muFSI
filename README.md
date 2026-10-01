@@ -3,9 +3,10 @@
 Viscous fluid-structure interaction for micro- and nanomechanical resonators.
 This repository contains the µFSI v3 rewrite and its planned SoftwareX examples.
 The isotropic DOLFINx Kirchhoff–Love plate and in-vacuo SLEPc eigen solver are
-implemented, together with the F2D fluid formulation, sparse plate/fluid
-coupling, driven response, and Sader reference. The 3D fluid, beam FEM,
-postprocessing, and generic I/O components remain placeholders.
+implemented, together with F2D and adaptive F3D fluid formulations, sparse
+plate/fluid coupling, driven response, and Sader reference. The Euler-Bernoulli
+beam, in-vacuo beam eigen workflow and local Sader/Tuck fluid-force models are
+also implemented. Postprocessing and generic I/O remain placeholders.
 
 ## Repository layout
 
@@ -30,9 +31,11 @@ muFSI/
 │       │   ├── base.py
 │       │   ├── grid.py
 │       │   ├── quadrature.py
+│       │   ├── panel_quadrature.py
 │       │   ├── stokeslet.py
 │       │   ├── stokes_2d.py
 │       │   ├── sader.py
+│       │   ├── section_force.py
 │       │   ├── stokes_3d.py
 │       │   └── kernels.py
 │       ├── coupling/
@@ -42,6 +45,7 @@ muFSI/
 │       │   ├── problem.py
 │       │   ├── linear.py
 │       │   ├── frequency_response.py
+│       │   ├── beam_frequency_response.py
 │       │   └── eigen.py
 │       ├── postprocessing/
 │       │   ├── qfactor.py
@@ -51,7 +55,7 @@ muFSI/
 │           ├── config.py
 │           └── results.py
 ├── tests/                 # Unit, integration, and analytical regression tests
-├── examples/              # Plate eigen and F2D/Sader workflows
+├── examples/              # Plate eigen and F2D/F3D/Sader workflows
 ├── benchmarks/            # Future accuracy, runtime, and memory studies
 ├── docs/                  # Architecture and development notes
 └── research/              # Experiments outside the installed package
@@ -113,9 +117,22 @@ full 200-frequency spectrum and export complex fields, CSV data, and a plot.
 `--quick` uses a smaller grid and mesh. Coupled fluid solves currently use one
 MPI rank. Install the `plot` extra for plotting.
 
+The adaptive F3D workflow is described in [the 3D fluid guide](docs/f3d_spectrum.md).
+Run `examples/plate_3d.py --quick` for a 6x12 fluid grid, or use the default
+12x24 grid to compare slender and wide plates. The script caps fluid counts at
+32x64 and saves both spectra, complex fields and quadrature reports. Install
+the optional `quadpy` extra for the legacy cubature rules, or select
+`--quadrature gauss` for NumPy quadrature.
+
+The [beam guide](docs/beam_cantilever.md) describes the port from the 1D
+cantilever folders. Run `examples/beam_eigenvalue_problem.py --plot` for six
+vacuum modes with analytical comparison, and `examples/beam_2d.py` for FEM
+with local Sader/Tuck forces. The latter uses 64 transverse panels by default;
+`--quick` uses 16. These beam examples do not require Quadpy.
+
 Other examples and benchmarks remain placeholders. Tests cover structural
 analytical results, the F2D kernel, Sader compliance, basis transfer, virtual
-work, and the coupled block solve.
+work, adaptive regular/singular F3D panels, and coupled block/Schur solves.
 
 Only `src/mufsi/` is included in the installed package. The public API is exposed
 through `mufsi.__init__` and remains provisional during the rewrite.

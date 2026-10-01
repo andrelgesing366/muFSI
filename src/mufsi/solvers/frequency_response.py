@@ -1,7 +1,8 @@
 """Complex driven response with exp(+i omega t) and full FE displacement."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from scipy import sparse
@@ -9,6 +10,7 @@ from scipy.sparse.linalg import LinearOperator, gmres
 
 from mufsi.coupling.operator import CouplingOperator
 from mufsi.hydrodynamics.stokes_2d import Stokes2D
+from mufsi.hydrodynamics.stokes_3d import Stokes3D
 from mufsi.solvers.linear import SciPyLUSolver
 
 
@@ -18,7 +20,7 @@ class FrequencyResponseResult:
 
     Frequencies are Hz, displacement metres, pressure Pa (resisting traction).
     relative_errors measures equilibrium against the applied force; fluid_errors
-    measures the F2D no-slip residual against velocity (NaN for action-only models).
+    measures the no-slip residual against velocity (NaN for action-only models).
     """
 
     frequencies: np.ndarray
@@ -33,10 +35,67 @@ def _csr(matrix):
     try:
         indptr, indices, data = matrix.getValuesCSR()
         return sparse.csr_matrix(
-            (data.copy(), indices.copy(), indptr.copy()), shape=matrix.getSize(),
+            (data.copy(), indices.copy(), indptr.copy()),
+            shape=matrix.getSize(),
         )
     finally:
         matrix.destroy()
+
+
+def _mixed_block_solve(D, G, E, B, F, omega, k_scale):
+    """Scaled joint displacement/pressure solve, also valid at vacuum poles."""
+    tiny = np.finfo(float).tiny
+    b_scale = max(np.max(np.asarray(np.abs(B).sum(axis=1))), tiny)
+    p_per_u = omega / b_scale
+    system = sparse.bmat(
+        [
+            [D / k_scale, G * (p_per_u / k_scale)],
+            [-1j * E, sparse.csr_matrix(B) * (p_per_u / omega)],
+        ],
+        format="csc",
+    )
+    solver = SciPyLUSolver()
+    solver.factorize(system)
+    rhs = np.concatenate((F / k_scale, np.zeros(B.shape[0])))
+    z = solver.solve(rhs)
+    for _ in range(2):
+        z += solver.solve(rhs - system @ z)
+    return z[: len(F)], z[len(F) :] * p_per_u
+
+
+def _fluid_schur_solve(D, G, E, B, F, omega, k_scale, batch_size=64):
+    """Exact pressure Schur solve; only bounded batches of structural RHSs.
+
+    (B + i*omega*E*D^-1*G) p = i*omega*E*D^-1*F.
+    The full displacement is recovered without modal truncation. Falls back
+    to a joint solve if D cannot be factored at a vacuum resonance.
+    """
+    structural = SciPyLUSolver()
+    try:
+        structural.factorize(D / k_scale)
+    except RuntimeError:
+        return _mixed_block_solve(D, G, E, B, F, omega, k_scale)
+    b_scale = max(np.max(np.abs(B).sum(axis=1)), np.finfo(float).tiny)
+    system = np.array(B / b_scale, copy=True)
+    for start in range(0, B.shape[1], batch_size):
+        stop = min(start + batch_size, B.shape[1])
+        influence = structural.solve(G[:, start:stop].toarray() / k_scale)
+        system[:, start:stop] += (1j * omega / b_scale) * (E @ influence)
+    pressure_solver = SciPyLUSolver()
+    pressure_solver.factorize(system)
+    dry = structural.solve(F / k_scale)
+    p = pressure_solver.solve((1j * omega / b_scale) * (E @ dry))
+    u = structural.solve((F - G @ p) / k_scale)
+    for _ in range(2):
+        r_force = F - D @ u - G @ p
+        r_velocity = 1j * omega * (E @ u) - B @ p
+        correction = structural.solve(r_force / k_scale)
+        dp = pressure_solver.solve(
+            (r_velocity + 1j * omega * (E @ correction)) / b_scale,
+        )
+        u += structural.solve((r_force - G @ dp) / k_scale)
+        p += dp
+    return u, p
 
 
 @dataclass
@@ -44,7 +103,9 @@ class FrequencyResponseSolver:
     """Eliminate fixed DOFs and solve each complex frequency system.
 
     F2D uses a sparse displacement/pressure block system, avoiding a dense
-    structural impedance or a global inverse. Other hydrodynamic models use
+    structural impedance or a global inverse. F3D uses an exact fluid Schur
+    solve with structural RHS batches, avoiding a dense structural impedance.
+    Other hydrodynamic models use
     pressure_from_velocity through a matrix-free Schur operator. Initial
     coupled solves require one MPI rank; structural eigen solves support MPI.
     """
@@ -52,7 +113,11 @@ class FrequencyResponseSolver:
     problem: Any
 
     def solve(
-        self, frequencies, load, *, progress: Callable[[int, int], None] | None = None,
+        self,
+        frequencies,
+        load,
+        *,
+        progress: Callable[[int, int], None] | None = None,
     ):
         f = np.atleast_1d(np.array(frequencies, dtype=float, copy=True))
         if f.ndim != 1 or f.size == 0 or not np.isfinite(f).all() or np.any(f <= 0):
@@ -95,40 +160,38 @@ class FrequencyResponseSolver:
         for i, hz in enumerate(f):
             omega = 2 * np.pi * hz
             D = K - omega**2 * M
-            if isinstance(hydro, Stokes2D):
+            if isinstance(hydro, (Stokes2D, Stokes3D)):
                 B = hydro.assemble_matrix(omega)
-                b_scale = max(np.max(np.asarray(np.abs(B).sum(axis=1))), tiny)
-                p_per_u = omega / b_scale
-                row_scale = omega
-                system = sparse.bmat([
-                    [D / k_scale, G * (p_per_u / k_scale)],
-                    [-1j * omega * E / row_scale, B * (p_per_u / row_scale)],
-                ], format="csc")
-                solver = SciPyLUSolver()
-                solver.factorize(system)
-                rhs = np.concatenate((F / k_scale, np.zeros(nf)))
-                z = solver.solve(rhs)
-                # Reuse LU for refinement of the high-contrast FE/fluid system.
-                for _ in range(2):
-                    z += solver.solve(rhs - system @ z)
-                u, p = z[:len(free)], z[len(free):] * p_per_u
+                if isinstance(hydro, Stokes3D):
+                    u, p = _fluid_schur_solve(D, G, E, B, F, omega, k_scale)
+                else:
+                    u, p = _mixed_block_solve(D, G, E, B, F, omega, k_scale)
                 v = 1j * omega * (E @ u)
                 fluid_residual = B @ p - v
             else:
-                def action(u):
+
+                def action(u, D=D, omega=omega):
                     return D @ u + G @ hydro.pressure_from_velocity(
-                        omega, 1j * omega * (E @ u),
+                        omega,
+                        1j * omega * (E @ u),
                     )
 
                 pre = SciPyLUSolver()
                 pre.factorize(D)
                 operator = LinearOperator(D.shape, matvec=action, dtype=complex)
                 preconditioner = LinearOperator(
-                    D.shape, matvec=pre.solve, dtype=complex,
+                    D.shape,
+                    matvec=pre.solve,
+                    dtype=complex,
                 )
                 u, info = gmres(
-                    operator, F, M=preconditioner, rtol=1e-9, atol=0,
-                    restart=80, maxiter=300,
+                    operator,
+                    F,
+                    M=preconditioner,
+                    rtol=1e-9,
+                    atol=0,
+                    restart=80,
+                    maxiter=300,
                 )
                 if info != 0:
                     raise RuntimeError(
@@ -139,7 +202,8 @@ class FrequencyResponseSolver:
             errors[i] = np.linalg.norm(D @ u + G @ p - F) / max(force_scale, tiny)
             if fluid_residual is not None:
                 fluid_errors[i] = np.linalg.norm(fluid_residual) / max(
-                    np.linalg.norm(v), tiny,
+                    np.linalg.norm(v),
+                    tiny,
                 )
             if not np.isfinite(u).all() or not np.isfinite(p).all():
                 raise RuntimeError(f"Non-finite coupled solution at {hz:g} Hz.")

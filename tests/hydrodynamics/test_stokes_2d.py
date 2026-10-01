@@ -6,7 +6,7 @@ import numpy as np
 from scipy import sparse
 from scipy.special import keip, kerp, kv
 
-from mufsi import Fluid, FluidGrid, PlateGeometry, SaderMethod, Material, Stokes2D
+from mufsi import Fluid, FluidGrid, Material, PlateGeometry, SaderMethod, Stokes2D
 from mufsi.hydrodynamics.sader import gamma_function
 from mufsi.solvers.linear import SciPyLUSolver
 
