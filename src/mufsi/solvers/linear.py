@@ -1,4 +1,4 @@
-"""Reusable SciPy LU and a reserved PETSc solver interface."""
+"""Reusable dense and sparse SciPy LU behind a common solver interface."""
 
 from abc import ABC, abstractmethod
 from typing import Any
@@ -48,15 +48,3 @@ class SciPyLUSolver(LinearSolver):
             self._factors.solve(rhs) if self._sparse
             else lu_solve(self._factors, rhs)
         )
-
-
-class PETScSolver(LinearSolver):
-    """Placeholder for a configurable PETSc direct or iterative solver."""
-
-    def factorize(self, matrix: Any) -> None:
-        """Prepare PETSc operators and solver state."""
-        raise NotImplementedError("PETSc solver setup is pending.")
-
-    def solve(self, rhs: Any) -> Any:
-        """Solve using the configured PETSc backend."""
-        raise NotImplementedError("The PETSc linear solve is pending.")

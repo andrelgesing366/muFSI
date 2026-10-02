@@ -1,41 +1,34 @@
-# Tests and planned coverage
+# Tests
 
-The folders mirror the library boundaries. `structure/test_kirchhoff.py` and
-`solvers/test_eigen.py` cover input validation, analytical plate/beam frequencies,
-convergence, physical scaling, matrix symmetry, pressure assembly, constraints,
-and modal mass orthogonality. FEM tests require DOLFINx/PETSc/SLEPc; they skip
-when those libraries are unavailable. The hydrodynamics tests cover the old
-Kelvin formula, batch pressure solves, Sader rigid-section impedance, uniform
-beam compliance, and its exact static limit. Coupling tests check basis values
-against DOLFINx, virtual work, and block/dense eliminated response agreement.
-F3D tests also check the legacy Stokeslet, steady/unsteady singular integrals,
-adaptive refinement and failure limits, Quadpy/Gauss agreement, symmetry and
-odd grid counts, positive rigid dissipation, and the slender F2D limit. Its
-coupled Schur solve is checked against a separate joint dense solve, including
-a singular in-vacuo stiffness fallback. Coupled F2D/F3D implementations are
-currently serial; those FEM tests skip under MPI.
-No old-code regression data is stored yet.
+The folders follow the implemented library boundaries. Run the full suite from
+the repository root inside the matched scientific environment:
 
-Beam tests check exact cantilever/bridge/simply-supported spectra, mesh
-convergence, physical scaling, consistent modal mass, line-load units, static
-point/distributed compliance and point-load virtual work. Local-force tests
-compare the Tuck force with the legacy cosine-panel formula and Sader loading;
-beam response is checked against analytical Sader fields. Beam structural
-checks support MPI; driven beam response and arbitrary point loads are serial.
+```console
+PYTHONPATH=src python -m unittest discover -s tests -t . -v
+```
 
-- `models/`: input validation, units, and derived physical properties.
-- `structure/`: assembly, boundary conditions, point/distributed loads, and
-  independent in-vacuo beam/plate benchmarks.
-- `hydrodynamics/`: grid ordering/weights, limiting kernels, singular panels,
-  and 2D/3D pressure solves.
-- `coupling/`: exact interpolation of representable fields, projection/virtual
-  work consistency, cell-edge points, and old/new transfer comparisons.
-- `solvers/`: residuals and known coupled responses, plus backend agreement.
-- `postprocessing/`: resonance/Q recovery from independently generated curves.
-- `io/`: complex-data round trips, metadata, and schema compatibility.
-- `data/regression/`: selected reference outputs with environment, generation
-  instructions, provenance, units, and tolerances.
+The tests use `unittest` and are also collected by pytest. FEM tests require
+DOLFINx/PETSc/SLEPc and skip when unavailable. Coupled fluid response and
+arbitrary point loading are serial; beam structural checks also support MPI.
+A skipped scientific test is not a passing numerical check.
 
-Add tests as numerical components are implemented. The current tests use
-`unittest`, so they run without pytest and are also collected by it. A skipped
-scientific test is not a passing numerical check.
+| Folder | Implemented checks |
+| --- | --- |
+| `structure/` | Beam/plate spectra against analytical limits, mesh convergence, physical scaling, matrix symmetry, loads, constraints, modal mass and orthogonality |
+| `hydrodynamics/` | F2D Kelvin kernel and pressure solves, Sader/section-force compliance and static limits, weighted EB/KL coefficient recovery and degree selection |
+| `coupling/` | Basis evaluation, representable-field interpolation, virtual work, boundary/cell-edge behavior, and coupled block response |
+| `solvers/` | Eigen residuals, beam response against analytical Sader fields, frequency-response validation and backend behavior |
+| `postprocessing/` | Independently generated SHO resonances, energy/work balance, FEM Q, and 2D velocity/strain/dissipation recovery |
+| `hydrodynamics/legacy/` | Constant-panel kernels, singular/regular integration, Quadpy/Gauss and analytic agreement, refinement failure limits, multigrid/hybrid assembly, symmetry, pressure batches and dissipation |
+| `solvers/legacy/` | Analytic/multigrid panel response against separate joint systems, including dry-pole fallback |
+
+`hydrodynamics/test_stokes_3d.py` also checks weighted force projection against
+independent integration, the coefficient Schur solution against a joint solve,
+full-FE virtual work and fluid-work consistency, EB/KL responses, and 2D field
+recovery from weighted 3D displacement. Existing weighted research checks
+remain under `research/` with their experiment drivers.
+
+There are no stored old-code regression fixtures yet. Add those only with
+documented provenance, generation environment, units, and tolerances. Generic
+I/O round-trip tests and particle-detection checks belong with their future
+implementations; see [the development roadmap](../docs/development.md).

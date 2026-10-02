@@ -36,8 +36,11 @@ class CouplingOperator:
 
     @classmethod
     def from_structure(cls, structure, grid):
+        points = grid.points
+        if structure.mesh.geometry.dim == 1:
+            points = points[:, :1]
         return cls(
-            build_evaluation_matrix(structure.function_space, grid.points),
+            build_evaluation_matrix(structure.function_space, points),
             grid.weights,
         )
 

@@ -90,10 +90,12 @@ def main():
         args.output / "response.npz", frequencies=frequencies,
         displacement=result.displacement, pressure=result.pressure,
         fluid_points=grid.points, fluid_weights=grid.weights,
+        fluid_panel_edges=grid.panel_edges,
         structural_coordinates=plate.function_space.tabulate_dof_coordinates(),
         f2d_tip=f2d_tip, sader_tip=sader_tip,
     )
     metadata = {
+        "method": "Stokes2D",
         "geometry_SI": vars(geometry), "material_SI": vars(material),
         "fluid_SI": vars(fluid), "mesh_resolution": plate.mesh_resolution,
         "element_degree": plate.element_degree,

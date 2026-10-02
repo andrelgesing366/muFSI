@@ -16,9 +16,9 @@ from mufsi import (
     Material,
     PlateGeometry,
     Stokes2D,
-    Stokes3D,
 )
 from mufsi.coupling.basis_evaluation import build_evaluation_matrix
+from mufsi.hydrodynamics.legacy.stokes_3d import Stokes3D
 
 
 class TransferTests(unittest.TestCase):

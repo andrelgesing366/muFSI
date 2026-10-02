@@ -14,6 +14,19 @@ class PointLoad:
 
 
 @dataclass(frozen=True)
+class PointLoads:
+    """Simultaneous point forces, each with its own position and phase."""
+
+    loads: tuple[PointLoad, ...]
+
+    def __post_init__(self):
+        loads = tuple(self.loads)
+        if not loads or not all(isinstance(load, PointLoad) for load in loads):
+            raise ValueError("PointLoads requires a nonempty sequence of PointLoad.")
+        object.__setattr__(self, "loads", loads)
+
+
+@dataclass(frozen=True)
 class DistributedLoad:
     """Transverse load callable evaluated at physical coordinates.
 
@@ -24,4 +37,4 @@ class DistributedLoad:
     values: Callable[[Any], Any]
 
 
-Load = PointLoad | DistributedLoad
+Load = PointLoad | PointLoads | DistributedLoad

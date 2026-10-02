@@ -1,235 +1,154 @@
-# Adaptive F3D frequency response
+# Weighted polynomial 3D fluid loading
 
-`Stokes3D` ports the rectangle-panel method in the original `Fluid/F3D.py`.
-It includes interactions between all longitudinal sections of a plate.
-`examples/plate_3d.py` compares this model with F2D and Sader for slender
-and wide cantilevers, using the isotropic DOLFINx Kirchhoff–Love plate.
-
-The formulation follows Gesing, Platz and Schmid, *On the 3D Stokes flow
-around non-slender MEMS resonators*, *Computers and Fluids* **299** (2025),
-106677, [doi:10.1016/j.compfluid.2025.106677](https://doi.org/10.1016/j.compfluid.2025.106677),
-particularly Eqs. (4)–(7), (13)–(18), and (21).
-
-## Formulation and signs
-
-Coordinates and material/fluid properties use SI units. The zero-thickness
-plate occupies `[0,L] x [-W/2,W/2]`; the fluid is Newtonian, incompressible,
-unbounded and linearized about rest. This implementation handles transverse
-motion on a planar plate. It does not include walls or finite-thickness flow.
-
-The library uses `exp(+i omega t)`, with angular frequency in rad/s and
-`lambda = sqrt(+i omega/nu)`, where nu = mu/rho. Define
+The canonical `mufsi.Stokes3D` integrates the unsteady Stokeslet against a
+continuous Chebyshev pressure expansion with inverse-square-root weights at
+all four rectangle edges. It supports Euler-Bernoulli (EB) and Kirchhoff-Love
+(KL) finite-element structures. The rectangle is x in [0,L], y in [-W/2,W/2].
 
 ```text
-z = lambda*r
-A(z) = 2 exp(-z) (1 + 1/z + 1/z^2) - 2/z^2
-B(z) = -2 exp(-z) (1 + 3/z + 3/z^2) + 6/z^2
-Kzz = [A(z)/r + B(z) dz^2/r^3] / (8*pi*mu)
-mobility[i,j] = integral over panel j of Kzz(observation i - source) dA
-velocity = mobility @ pressure
+xi = 2*x/L-1, eta = 2*y/W
+p(x,y) = sum a[m,n]*T_m(xi)*T_n(eta) / sqrt((1-xi^2)*(1-eta^2))
+H[i,(m,n)] = integral Gzz(target_i-source,omega)*psi[m,n](source) dA
+H a ~= v       (column-scaled, oversampled complex least squares)
 ```
 
-Positive pressure is resisting traction; the fluid force on the structure is
-its negative. The kernel is conjugated relative to the original code's
-`sqrt(-i omega/nu)`. The positive steady limit,
-`Kzz = (1 + dz^2/r^2)/(8*pi*mu*r)`, fixes the normalization and sign.
-There is no extra factor of two for the two plate faces. Small-argument
-Taylor expansions remove cancellation in A, B and the radial primitive.
+`x_degree` and `y_degree` always mean maximum polynomial degree. EB retains
+only even transverse degrees up to `y_degree`; KL retains all degrees,
+including the odd terms needed for torsional/antisymmetric motion. In the older
+research EB API, K meant an even-degree index, so y_degree=2*K. The KL research
+API used K as its actual transverse maximum degree. Production avoids this
+ambiguity. Defaults are x_degree=16 and y_degree=8; both remain adjustable.
 
-`unsteady_stokeslet_zz` accepts 2D or 3D separation vectors, including
-omega=0 for point-kernel verification. `Stokes3D` requires omega>0.
+```python
+from mufsi import CoupledProblem, FrequencyResponseSolver, Stokes3D
+hydro = Stokes3D(fluid, beam.geometry, formulation="EB",
+                 x_degree=16, y_degree=8)
+solver = FrequencyResponseSolver(CoupledProblem(beam, hydro))
+response = solver.solve(frequencies_Hz, load)
+# For a plate: Stokes3D(fluid, plate.geometry, formulation="KL", ...)
+```
 
-## Panels and grids
+## Singular integration and force projection
 
-`FluidGrid.cantilever(geometry, nx=12, ny=24)` preserves the legacy F3D grid:
+Cosine coordinates cancel the two pressure edge weights. Duffy triangle
+quadrature removes the coincident-point 1/r Stokeslet singularity. The stable
+unsteady kernel is shared with the legacy reference. Numerical Gauss rules are
+the default and require no Quadpy; quadrature_backend="quadpy" remains an
+option. Successive rules must meet tolerance, otherwise assembly raises an
+IntegrationConvergenceError. No artificial kernel regularization is applied.
+The product edge weight is a useful representation, not a verified exact
+rectangular-corner exponent.
 
-- Half Chebyshev–Gauss nodes in x, clustered at the free tip:
-  `x_i = L sin((2i-1) pi/(4nx))`, i=1,…,nx.
-- Full ascending Chebyshev–Gauss nodes in y, clustered at both edges.
-- Panel boundaries halfway between adjacent nodes, with the physical outer
-  boundaries at 0, L, and ±W/2.
-- Pressure projection weights
-  `wx = pi/(2nx) sqrt(L^2-x^2)` and
-  `wy = pi/ny sqrt((W/2)^2-y^2)`, without renormalization.
-- x-major ordering: `ix*ny + iy`. Even and odd counts are both supported.
+`assemble_matrix(omega)` returns a rectangular mobility, not the square
+panel-pressure matrix of the previous API. `coefficients_from_velocity` solves
+for pressure coefficients; `pressure_from_velocity` evaluates their continuous
+pressure at the collocation points. `pressure_from_coefficients(a, points)`
+accepts arbitrary strictly interior evaluation points. Edge values are excluded
+because the representation is singular there. Angular frequency is rad/s.
 
-`x_uniform=True` and `y_uniform=True` select midpoint panels and ordinary
-uniform weights over the full physical dimensions. `FluidGrid.midpoint`
-also defines valid 3D rectangles. The F2D Simpson grid has endpoint x nodes
-and does not define 3D panels.
+EB collocation uses independent positive-y points. KL uses the full width;
+reflected mobility rows reuse integration with the correct sign for each
+transverse degree. `nx` and `ny` control collocation independently of polynomial
+orders; EB ny counts half-width points, KL ny counts full-width points.
+Only the most recent frequency is cached.
 
-`grid.panel_bounds` returns `(nx*ny,4)` rectangle bounds in grid order;
-`x_panel_edges` and `panel_edges` store the longitudinal/transverse boundaries.
-Mobility uses actual panel integrals; structural force projection uses the
-grid's separate area quadrature weights, as in the original method.
-
-## Tolerance-controlled integration
-
-The default backend uses Quadpy C2 rules of degree 2, 4, 6 and 8. Successive
-complex integral estimates are compared for each regular panel. Unresolved
-panels undergo local longest-side bisection; accurate leaves are retained.
-The summed local error estimates and successive total integrals must satisfy
+The FE-to-fluid evaluation E and force projection C are different operators:
 
 ```text
-estimated error <= absolute_tolerance + tolerance*abs(integral)
+E[i,j] = phi_j(collocation_i)
+C[j,k] = integral phi_j(x,y)*psi_k(x,y) dA
+L = least-squares action of H
+D u + C a = F,       a = i*omega*L*E*u
+(I + i*omega*L*E*D^-1*C) a = i*omega*L*E*D^-1*F
 ```
 
-The defaults are relative tolerance 2e-3, absolute tolerance 1e-15 m
-(before division by viscosity), at most 12 refinement rounds and 16384
-subpanels per regular entry. `QuadratureConvergenceError` reports failure;
-the implementation never silently accepts a panel that exceeded its limits.
+The coefficient Schur solve retains every free structural DOF, with a scaled
+joint-system fallback at dry poles. It does not truncate structural modes or
+construct a dense structural impedance. For EB, transverse orthogonality gives
+an exact zero projection for every nonconstant transverse term. For KL,
+force quadrature works cell by cell in cosine-space vertical slices, so it does
+not cross FE derivative discontinuities. Successive orders check the force
+projection, independently of fluid quadrature (default relative norm tolerance
+1e-3). A custom `WeightedCouplingOperator.from_structure(..., tolerance=...,
+orders=...)` can tighten this check before constructing the problem.
 
-For the singular self panel, an inscribed disk is integrated analytically.
-The stable planar radial primitive, excluding viscosity, is
+## Responses, Q and field recovery
 
-```text
-H(R) = integral_0^R Kzz(r)*mu*r dr
-     = [1-(1+lambda*R) exp(-lambda*R)] / (4*pi*lambda^2*R)
-disk integral = 2*pi*H(R)
-H(R) -> R/(8*pi) as lambda -> 0
+The time convention is exp(+i omega t). Pressure is traction applied to the
+fluid; the actual fluid force on the structure is its negative. Resisting
+forces enter the left-hand side of structural equilibrium.
+
+`FrequencyResponseResult` keeps full-DOF displacement, sampled pressure,
+pressure_coefficients, pressure_points, full-DOF resisting fluid_force,
+equilibrium residuals, collocation no-slip residuals and force_projection_error.
+The no-slip residual includes finite-basis approximation error; it need not
+approach the linear solver's equilibrium residual. Refine pressure degrees,
+collocation and FE mesh independently. Use velocity_from_coefficients at
+independent points to investigate pressure approximation further.
+
+`analyze_q_factor` supports EB/KL with weighted 3D, the existing 2D models,
+and EB/Sader section forces. It fits a resolved isolated resonance with the
+SHO method and evaluates energy Q at its fitted frequency. Energy Q uses the
+maximum structural bending-plus-kinetic energy and model-specific work per
+cycle; there is no explicit stored-fluid-energy term. Weighted pressure work
+uses C*a, never collocation areas times sampled singular pressure.
+
+`reconstruct_flow_from_response` evaluates structural velocity on a separate
+2D grid, solves Stokes2D, and recovers the existing streamfunction, velocity,
+strain and dissipation. This is explicitly a 2D field approximation, even when
+the displacement comes from 3D or Sader loading. Its dissipation does not
+replace model-specific work for Q. Full 3D field recovery remains deferred.
+
+## Small runnable examples
+
+```sh
+PYTHONPATH=src OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python examples/formulation_comparison.py
+PYTHONPATH=src .venv/bin/python examples/formulation_comparison.py --resonances 1
+PYTHONPATH=src .venv/bin/python examples/plate_3d.py --resonances 1
+PYTHONPATH=src .venv/bin/python examples/formulation_comparison.py --plots-only
 ```
 
-The rectangle remainder uses this exact radial primitive and angular
-Gauss–Legendre integration, split at each corner direction. Angular order
-starts at 15, is checked against 30, and doubles if needed, up to 960.
-This is the special diagonal treatment of the adaptive panel method.
-General regular entries still use 2D cubature.
+The first example compares EB/3D, KL/3D, EB/2D, KL/2D and EB/Sader on the same
+800 x 50 x 5 micrometre silicon cantilever in water, under the same two-corner
+forcing. Defaults cover two bending resonances with 25 samples each. It saves
+spectral_displacement.png, qfactor_vs_frequency.png, qfactor.csv, spectra.npz,
+report.json and one flow_2d_approximation.png. The report retains SHO fit,
+no-slip, projection and work-balance diagnostics. Modest orders/meshes make this
+a demonstration, not a continuum-convergence benchmark. `--models` selects
+individual formulations; `--x-degree`, `--y-degree` and mesh options allow
+later refinement.
 
-`quadrature_backend="gauss"` uses NumPy tensor Gauss–Legendre rules with the
-same tolerance/refinement algorithm and no Quadpy dependency. Tests compare
-the two backends. Error estimates control numerical integration of a fixed
-panel discretization; they are not rigorous bounds or a fluid-grid
-convergence study.
+An antisymmetric plate example uses `--symmetry antisymmetric --resonances 1`
+with an explicit `--f-min`/`--f-max` window containing its odd resonance.
+EB cannot represent odd width motion.
 
-After assembly, `hydro.integration_report` records the backend, frequency,
-number of evaluated rows, locally refined entries, maximum estimated
-relative error, maximum error/target ratio, and maximum refinement depth.
-Counts refer to actually evaluated entries; symmetry copies are excluded.
-Reports are saved at every frequency by the example.
+## Legacy implementations
 
-## Assembly and coupled solve
+The former Quadpy panel solver, fully radial-analytic solver, multigrid and
+hybrid/multigrid classes are retained under `hydrodynamics/legacy/` with their
+panel integration and grid helpers. Existing comparison tests and benchmarks
+still target those methods. Research drivers now import promoted library code;
+production modules never import research. See [the legacy panel guide](legacy/f3d_spectrum.md)
+and the preserved [analytic](legacy/stokes_3d_analytic.md),
+[multigrid](legacy/stokeslet_multigrid.md), and
+[hybrid](../research/stokeslet_hybrid_results.md) reports for their original
+formulations and measurements. The [formulation study](formulation_study.md)
+documents the extensive comparisons of the active methods.
 
-`assemble_matrix(omega)` returns read-only complex128 mobility in m/(Pa s).
-Transverse reflection is reused for symmetric grids. Uniform x panels also
-reuse longitudinal translation and reflection. Only the most recent
-frequency is cached. `pressure_from_velocity` accepts a vector or a batch
-of velocity columns and solves with reusable LU factors. No inverse is formed.
-`clear_cache()` releases the cached matrix and default LU factors.
 
-After eliminating fixed structural DOFs, both fluid methods solve
+## Compact example validation
 
-```text
-D u + G p = F,          D = K - omega^2 M, G = E.T Q
--i omega E u + B p = 0
-```
+The five-formulation example completed two bending-resonance windows with
+25 samples each. All 101 repository tests and the 16 existing independent
+weighted-pressure checks passed. No new runtime/memory convergence benchmark
+was run. The 3D collocation velocity residuals in this demonstration reached
+0.28% in the first resonance window and 1.26% in the second; SHO amplitude-fit
+residuals remained below 0.8%. Work-balance errors were below 2e-9 across the
+five models. The stored report and CSV include the mesh, polynomial orders,
+fit residuals, projection errors and work balance.
 
-For dense F3D mobility, the solver forms the exact fluid Schur system
-
-```text
-(B + i omega E D^-1 G) p = i omega E D^-1 F
-u = D^-1 (F-Gp)
-```
-
-Sparse structural LU solves use batches of 64 RHS columns. The full FEM
-displacement is recovered, without truncating structural modes or forming a
-dense structural hydrodynamic impedance. A scaled joint solve is used if D
-cannot be factored at an in-vacuo pole. Two residual corrections reuse the
-factors. Coupled response currently requires one MPI rank.
-
-The dense fluid matrices still cost O((nx*ny)^2) storage and their LU costs
-O((nx*ny)^3). At 32x64, each complex128 fluid matrix occupies 64 MiB;
-assembly, Schur work and LU require additional memory. Start with coarse grids.
-
-## Environment and execution
-
-Use the matched DOLFINx/PETSc environment described in
-[the plate guide](plate_eigenproblem.md). In Linux/WSL, an isolated environment
-can reuse those system packages:
-
-```console
-python3 -m venv --system-site-packages .venv
-.venv/bin/python -m pip install -e ".[quadpy,plot]"
-.venv/bin/python examples/plate_3d.py --quick
-.venv/bin/python examples/plate_3d.py
-```
-
-The `quadpy` extra selects `legacy-quadpy==0.16.10`, which provides the
-original C1/C2 APIs and is distributed under GPL-3.0-or-later
-([package metadata](https://pypi.org/project/legacy-quadpy/)).
-Current [official Quadpy](https://github.com/sigma-py/quadpy) requires its
-own license. No Quadpy implementation is copied into µFSI.
-To use only NumPy/SciPy quadrature, install the `plot` extra and run
-
-```console
-PYTHONPATH=src python3 examples/plate_3d.py --quick --quadrature gauss
-```
-
-Useful options include `--case slender`, `--case wide`, `--nx`, `--ny`,
-`--samples`, `--tolerance`, `--uniform-x`, `--f-min`, `--f-max` and
-`--output`. The comparison script enforces 3<=nx<=32 and 1<=ny<=64.
-F2D uses the previous odd x count when nx is even, so its actual count also
-respects the limit.
-
-| Setting | Default | Quick |
-| --- | ---: | ---: |
-| F3D fluid points | 12x24 | 6x12 |
-| F2D fluid points | 11x24 | 5x12 |
-| Frequency samples | 72 | 24 |
-| Slender crossed P2 mesh | 40x4 | 24x4 |
-| Wide crossed P2 mesh | 40x20 | 24x12 |
-
-Both geometries have L=500 um and t=5 um; W=50 um for the slender case and
-250 um for the wide case. Material: E=169 GPa, rho_s=2330 kg/m^3, nu_s=0.3.
-Water: rho=997 kg/m^3, mu=890e-6 Pa s. The load is uniform pressure 1 Pa,
-measured at (L,W/2). Logarithmic frequencies span 1–400 kHz for the slender
-case and 1–150 kHz for the wide case.
-
-Sader is a slender-beam reference and is an extrapolation for the wide case.
-The plots show driven displacement amplitude in nm/Pa, not a thermal PSD.
-
-## Outputs and verification
-
-Each case writes `spectrum.png`, `spectrum.csv`, `response.npz` and
-`parameters.json` under `results/plate_3d/{slender,wide}/`.
-A combined `comparison.png` is written at the parent level.
-CSV contains complex tip responses and force/no-slip residuals; NPZ contains
-full displacement and pressure arrays, coordinates, weights and 3D panels.
-JSON records physical parameters, discretization, versions, runtime,
-conventions and per-frequency integration reports.
-
-Independent tests cover the original point-kernel formula with harmonic
-conversion, the exact steady singular rectangle, unsteady self panels against
-Duffy-triangle integration, near-panel refinement and failure limits,
-Quadpy/Gauss agreement, symmetry, odd counts, pressure batches, positive rigid
-dissipation, the slender F2D limit, coupled FEM response against a separate
-joint dense solve, and the singular-D fallback. Existing F2D and plate/eigen
-tests remain in the suite.
-
-```console
-PYTHONPATH=src OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python -B -m unittest discover -s tests -v
-```
-
-On DOLFINx 0.10.0.post5, PETSc 3.24.4, NumPy 2.3.5 and SciPy 1.16.3, the
-default Quadpy examples gave the following first sampled amplitude maxima:
-
-| Geometry | F3D [kHz] | F2D [kHz] | Sader [kHz] |
-| --- | ---: | ---: | ---: |
-| Slender, L/W=10 | 11.556 | 11.556 | 11.556 |
-| Wide, L/W=2 | 7.742 | 6.264 | 6.264 |
-
-The slender spectra closely overlap around the first response peak; finite
-end effects and discretization cause differences at higher modes. The wide
-F3D response shifts relative to the section-based models. These values are
-maxima on a 72-point frequency grid, not fitted resonance frequencies.
-The two F3D sweeps took approximately 47 and 48 seconds after imports in the
-test environment. Maximum force-balance residuals were 1.1e-6 and 1.8e-6;
-no-slip residuals were below 6.1e-15.
-
-All 36 serial tests passed in this environment, including the Quadpy backend
-comparison and an elongated self panel from a 32x64 grid. A complete coarse
-Gauss example also ran in the system environment without Quadpy. Ruff checks
-passed for the library, examples, benchmarks and tests.
-
-These deliberately small examples demonstrate the workflow. Publication
-results need separate fluid-grid, structural-mesh, integration-tolerance
-and frequency-resolution convergence studies.
+First-window fitted f0 was 4.174 kHz (EB/3D), 4.208 kHz (KL/3D), 4.079 kHz
+(EB/2D), 4.114 kHz (KL/2D) and 4.074 kHz (EB/Sader). These are finite-
+discretization comparisons, not a validation of exact corner weights or a
+continuum accuracy bound. `--plots-only` regenerates figures and the 2D field
+from saved full-DOF spectra without another frequency sweep.

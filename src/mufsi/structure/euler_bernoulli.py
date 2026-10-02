@@ -9,7 +9,7 @@ from typing import Any
 from mufsi.models.geometry import BeamGeometry
 from mufsi.models.material import Material
 from mufsi.structure.base import StructuralModel
-from mufsi.structure.loads import DistributedLoad, Load, PointLoad
+from mufsi.structure.loads import DistributedLoad, Load, PointLoad, PointLoads
 
 
 def _backend():
@@ -258,29 +258,21 @@ class EulerBernoulliBeam(StructuralModel):
                 ufl.inner(line_load, v) * ufl.Measure("dx", domain=self.mesh)
             )
             vector = assemble_vector(form)
-        elif isinstance(load, PointLoad):
+        elif isinstance(load, (PointLoad, PointLoads)):
             if self.mesh.comm.size != 1:
                 raise NotImplementedError(
                     "Arbitrary beam point loads currently require one MPI rank."
                 )
-            from mufsi.coupling.basis_evaluation import build_evaluation_matrix
+            from mufsi.coupling.basis_evaluation import point_force_values
 
-            position = np.asarray(load.position, dtype=float)
-            if position.shape != (1,) or not np.isfinite(position).all():
-                raise ValueError(
-                    "A beam point position must contain one finite x coordinate."
-                )
-            evaluation = build_evaluation_matrix(self.function_space, position[None, :])
-            amplitude = scalar_values(load.amplitude)
+            values = scalar_values(point_force_values(self.function_space, load))
             zero = fem.Constant(self.mesh, PETSc.ScalarType(0))
             vector = assemble_vector(
                 fem.form(ufl.inner(zero, v) * ufl.Measure("dx", domain=self.mesh))
             )
-            vector.getArray()[:] = (
-                np.asarray(evaluation.T.toarray()).ravel() * amplitude
-            )
+            vector.getArray()[:] = values
         else:
-            raise TypeError("Use DistributedLoad or PointLoad.")
+            raise TypeError("Use DistributedLoad, PointLoad or PointLoads.")
         vector.ghostUpdate(
             addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE
         )

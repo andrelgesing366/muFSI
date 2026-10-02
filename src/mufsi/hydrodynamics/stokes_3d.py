@@ -1,194 +1,130 @@
-"""Adaptive 3D Stokeslet panel formulation ported from Fluid/F3D.py."""
+"""Continuous polynomial traction with inverse-square-root rectangle edge weights."""
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from __future__ import annotations
 
 import numpy as np
 
 from mufsi.hydrodynamics.base import HydrodynamicModel
-from mufsi.hydrodynamics.grid import FluidGrid
-from mufsi.hydrodynamics.panel_quadrature import IntegrationReport, PanelIntegrator
-from mufsi.models.fluid import Fluid
-from mufsi.solvers.linear import LinearSolver, SciPyLUSolver
+from mufsi.hydrodynamics.weighted_pressure import (
+    PlateMobility,
+    PlatePressureBasis,
+    Quadrature,
+    WeightedBasis,
+    _integer,
+    solve_coefficients,
+)
 
 
-@dataclass(frozen=True)
 class Stokes3D(HydrodynamicModel):
-    """Thin-plate single-layer mobility with all longitudinal interactions.
+    """Unbounded unsteady Stokes mobility for EB or KL motion, exp(+i omega t).
 
-    v = B p; p is resisting traction in Pa with exp(+i omega t).
-    B integrates Szz/(8*pi*mu) over piecewise-constant pressure panels.
-    The fluid mobility is dense, complex128, and only the latest frequency is
-    cached. LU solves replace the legacy inverse. This is the adaptive 2D panel
-    quadrature version, not the later general analytical 1D panel reduction.
+    p = sum a_mn T_m(2x/L-1) T_n(2y/W) / sqrt((1-xi²)(1-eta²)).
+    x_degree/y_degree are maximum polynomial degrees for BOTH formulations.
+    EB uses even y degrees <= y_degree; KL includes every y degree. This
+    product weight is a numerical representation, not an exact corner exponent.
+
+    H maps pressure coefficients [Pa] to collocation velocities [m/s].
+    Oversampled, column-scaled least squares enforces no-slip approximately.
+    Quadrature removes edge weights by cosine coordinates and treats the
+    coincident Stokeslet by Duffy triangles. No kernel regularization is used.
+    Only the most recent frequency's matrix/factorization is cached.
     """
 
-    fluid: Fluid
-    grid: FluidGrid
-    solver: LinearSolver | None = None
-    tolerance: float = 2e-3
-    absolute_tolerance: float = 1e-15
-    quadrature_backend: str = "quadpy"
-    max_refinements: int = 12
-    max_subpanels: int = 16384
-    batch_size: int = 256
-    use_symmetry: bool = True
-    progress: Callable[[int, int], None] | None = None
+    def __init__(
+        self,
+        fluid,
+        geometry,
+        *,
+        formulation="KL",
+        x_degree=16,
+        y_degree=8,
+        nx=None,
+        ny=None,
+        quadrature_backend="gauss",
+        tolerance=2e-5,
+        absolute_tolerance=1e-10,
+        orders=(12, 20, 32, 48, 72, 104),
+    ):
+        formulation = formulation.upper()
+        if formulation not in {"EB", "KL"}:
+            raise ValueError("formulation must be 'EB' or 'KL'.")
+        _integer("x_degree", x_degree)
+        _integer("y_degree", y_degree)
+        self.fluid, self.geometry, self.formulation = fluid, geometry, formulation
+        self.x_degree, self.y_degree = x_degree, y_degree
+        self.basis = (
+            WeightedBasis(geometry, x_degree, y_degree // 2)
+            if formulation == "EB"
+            else PlatePressureBasis(geometry, x_degree, y_degree)
+        )
+        # EB retains only independent positive-y equations. KL uses full width.
+        self.collocation_points = self.basis.collocation(nx, ny)
+        self.collocation_points.setflags(write=False)
+        self.quadrature = Quadrature(
+            quadrature_backend, tuple(orders), tolerance, absolute_tolerance
+        )
+        self.mobility = PlateMobility(self.basis, fluid, self.quadrature)
+        self.clear_cache()
 
-    def __post_init__(self):
-        if (
-            not np.isfinite([self.fluid.density, self.fluid.dynamic_viscosity]).all()
-            or min(self.fluid.density, self.fluid.dynamic_viscosity) <= 0
-        ):
-            raise ValueError("Fluid density and dynamic viscosity must be positive.")
-        _ = self.grid.panel_bounds  # Validate the longitudinal panel geometry.
-        object.__setattr__(
-            self,
-            "_integrator",
-            PanelIntegrator(
-                self.quadrature_backend,
-                self.tolerance,
-                self.absolute_tolerance,
-                self.max_refinements,
-                self.max_subpanels,
-                self.batch_size,
-            ),
-        )
-        object.__setattr__(
-            self, "solver", SciPyLUSolver() if self.solver is None else self.solver
-        )
-        object.__setattr__(self, "_omega", None)
-        object.__setattr__(self, "_matrix", None)
-        object.__setattr__(self, "_factorized_omega", None)
-        object.__setattr__(self, "integration_report", None)
-
-    def assemble_matrix(self, omega: float):
-        """Return read-only dense mobility B, in m/(Pa s).
-
-        Reuses transverse reflection when the grid is symmetric. Uniform x
-        panels also reuse translation/reflection across x; nonuniform grids
-        evaluate each longitudinal observation section independently.
-        """
-        if not np.isfinite(omega) or omega <= 0:
-            raise ValueError("omega must be finite and strictly positive.")
-        if self._omega == omega:
-            return self._matrix
-        g = self.grid
-        bounds = g.panel_bounds
-        nx, ny = g.nx, g.ny
-        matrix = np.empty((nx * ny, nx * ny), dtype=complex)
-        lam = np.sqrt(1j * omega / self.fluid.kinematic_viscosity)
-        atol = 1e-12 * max(np.ptp(g.x_panel_edges), np.ptp(g.panel_edges))
-        mirror_y = (
-            self.use_symmetry
-            and np.allclose(
-                g.y,
-                g.panel_edges[0] + g.panel_edges[-1] - g.y[::-1],
-                rtol=0,
-                atol=atol,
-            )
-            and np.allclose(
-                g.panel_edges,
-                g.panel_edges[0] + g.panel_edges[-1] - g.panel_edges[::-1],
-                rtol=0,
-                atol=atol,
-            )
-        )
-        dx = np.diff(g.x_panel_edges)
-        uniform_x = self.use_symmetry and np.allclose(dx, dx[0], rtol=1e-12, atol=atol)
-        uniform_x = uniform_x and np.allclose(
-            g.x,
-            (g.x_panel_edges[:-1] + g.x_panel_edges[1:]) / 2,
-            rtol=0,
-            atol=atol,
-        )
-        x_count, y_count = (1 if uniform_x else nx), ((ny + 1) // 2 if mirror_y else ny)
-        total = x_count * y_count
-        columns_reflected_y = np.arange(nx * ny).reshape(nx, ny)[:, ::-1].ravel()
-        refined, max_error, max_ratio, max_depth, count = 0, 0.0, 0.0, 0, 0
-        for ix in range(x_count):
-            for iy in range(y_count):
-                row = ix * ny + iy
-                observation = g.points[row]
-                regular = np.arange(nx * ny) != row
-                values, errors, n_refined, depth = self._integrator.regular(
-                    observation,
-                    bounds[regular],
-                    lam,
-                )
-                diagonal, diagonal_error, diag_depth = self._integrator.singular(
-                    observation,
-                    bounds[row],
-                    lam,
-                )
-                matrix[row, regular], matrix[row, row] = values, diagonal
-                denom = np.maximum(np.abs(values), np.finfo(float).tiny)
-                relative = np.max(errors / denom, initial=0.0)
-                targets = np.maximum(
-                    self._integrator._target(values), np.finfo(float).tiny
-                )
-                ratio = np.max(errors / targets, initial=0.0)
-                max_ratio = max(
-                    max_ratio,
-                    ratio,
-                    diagonal_error
-                    / max(self._integrator._target(diagonal), np.finfo(float).tiny),
-                )
-                max_error = max(
-                    max_error,
-                    relative,
-                    diagonal_error / max(abs(diagonal), np.finfo(float).tiny),
-                )
-                refined += n_refined
-                max_depth = max(max_depth, depth, diag_depth)
-                if mirror_y and iy != ny - 1 - iy:
-                    matrix[ix * ny + ny - 1 - iy] = matrix[row, columns_reflected_y]
-                count += 1
-                if self.progress is not None:
-                    self.progress(count, total)
-        if uniform_x:
-            blocks = matrix[:ny].reshape(ny, nx, ny).transpose(1, 0, 2).copy()
-            for ix in range(nx):
-                matrix[ix * ny : (ix + 1) * ny] = np.concatenate(
-                    [blocks[abs(jx - ix)] for jx in range(nx)],
-                    axis=1,
-                )
-        matrix /= self.fluid.dynamic_viscosity
-        matrix.setflags(write=False)
-        object.__setattr__(self, "_matrix", matrix)
-        object.__setattr__(self, "_omega", omega)
-        object.__setattr__(self, "_factorized_omega", None)
-        object.__setattr__(
-            self,
-            "integration_report",
-            IntegrationReport(
-                omega,
-                self.quadrature_backend,
-                count,
-                refined,
-                float(max_error),
-                float(max_ratio),
-                max_depth,
-            ),
-        )
-        return matrix
-
-    def pressure_from_velocity(self, omega: float, velocity):
-        """Solve for one velocity vector or batch (nx*ny[, nrhs])."""
-        v = np.asarray(velocity, dtype=complex)
-        n = self.grid.nx * self.grid.ny
-        if v.ndim not in (1, 2) or v.shape[0] != n or not np.isfinite(v).all():
-            raise ValueError("velocity must be finite with shape (nx*ny[, nrhs]).")
-        if self._factorized_omega != omega:
-            self.solver.factorize(self.assemble_matrix(omega))
-            object.__setattr__(self, "_factorized_omega", omega)
-        return self.solver.solve(v)
+    @property
+    def coefficient_count(self):
+        return self.basis.count
 
     def clear_cache(self):
-        """Release cached mobility/LU factors before a large new calculation."""
-        object.__setattr__(self, "_matrix", None)
-        object.__setattr__(self, "_omega", None)
-        object.__setattr__(self, "_factorized_omega", None)
-        object.__setattr__(self, "integration_report", None)
-        if isinstance(self.solver, SciPyLUSolver) and hasattr(self.solver, "_factors"):
-            del self.solver._factors
+        self._omega = None
+        self._matrix = self._inverse_action = None
+        self.integration_report = self.solve_report = None
+
+    def assemble_matrix(self, omega):
+        """Return rectangular coefficient mobility; not a panel-pressure matrix."""
+        if self._omega != omega:
+            matrix, report = self.mobility.assemble(omega, self.collocation_points)
+            action, solve_report = solve_coefficients(matrix, np.eye(len(matrix)))
+            matrix.setflags(write=False)
+            action.setflags(write=False)
+            self._omega, self._matrix, self._inverse_action = omega, matrix, action
+            self.integration_report, self.solve_report = report, solve_report
+        return self._matrix
+
+    def coefficient_action(self, omega):
+        """Cached least-squares map from collocation velocity to coefficients."""
+        self.assemble_matrix(omega)
+        return self._inverse_action
+
+    def coefficients_from_velocity(self, omega, velocity):
+        velocity = np.asarray(velocity, complex)
+        if (
+            velocity.ndim not in (1, 2)
+            or velocity.shape[0] != len(self.collocation_points)
+            or not np.isfinite(velocity).all()
+        ):
+            raise ValueError(
+                "velocity must be finite with one row per collocation point."
+            )
+        return self.coefficient_action(omega) @ velocity
+
+    def pressure_from_coefficients(self, coefficients, points=None):
+        """Evaluate continuous pressure at strictly interior points, in Pa."""
+        coefficients = np.asarray(coefficients, complex)
+        if (
+            coefficients.ndim not in (1, 2)
+            or coefficients.shape[0] != self.coefficient_count
+            or not np.isfinite(coefficients).all()
+        ):
+            raise ValueError("coefficients must be finite with one row per basis term.")
+        points = self.collocation_points if points is None else points
+        return self.basis.values(points) @ coefficients
+
+    def pressure_from_velocity(self, omega, velocity):
+        return self.pressure_from_coefficients(
+            self.coefficients_from_velocity(omega, velocity)
+        )
+
+    def velocity_from_coefficients(self, omega, coefficients, points=None):
+        """Evaluate velocity at independent interior points for no-slip checks."""
+        matrix = (
+            self.assemble_matrix(omega)
+            if points is None
+            else self.mobility.assemble(omega, points)[0]
+        )
+        return matrix @ np.asarray(coefficients, complex)

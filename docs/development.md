@@ -2,39 +2,30 @@
 
 ## Current state
 
-The isotropic DOLFINx plate implements mesh/space construction, bending/mass
-assembly, support constraints, and distributed pressure loads. The SLEPc
-eigen solver and `examples/plate_eigenvalue_problem.py` implement the first
-complete structural workflow. F2D, adaptive F3D, the Sader reference, sparse
-basis transfer, SciPy LU, and coupled frequency response are also implemented; see
-[the F2D guide](f2d_spectrum.md) and [the F3D guide](f3d_spectrum.md).
-The Euler-Bernoulli beam, beam eigen example, and local Sader/Tuck loading
-are implemented; see [the beam guide](beam_cantilever.md). Postprocessing
-and generic I/O remain placeholders.
-Plate/fluid/solver controls are validated; physical
-containers still only store their data.
+The DOLFINx Euler–Bernoulli beam and Kirchhoff–Love plate implement structural
+assembly, constraints, point/distributed loads, and dry SLEPc eigenproblems.
+Weighted polynomial 3D Stokes loading and 2D loading support both structures;
+Sader section loading supports EB. Full-DOF coupled response, SHO/energy Q,
+and 2D field recovery are implemented. See [the architecture](architecture.md),
+[the weighted 3D guide](f3d_spectrum.md), [the 2D guide](f2d_spectrum.md), and
+[the beam guide](beam_cantilever.md).
 
-Python 3.11 is the initial minimum and `3.0.0.dev0` is a development version.
-NumPy and SciPy are runtime dependencies. Install DOLFINx/PETSc/SLEPc in the
-scientific environment, as described in [the plate guide](plate_eigenproblem.md).
-Matplotlib is optional through the `plot` extra. The optional `quadpy` extra
-provides the legacy cubature backend; the NumPy Gauss backend needs no extra.
-See the F3D guide for runtime and dependency details.
+`examples/formulation_comparison.py` provides a compact comparison of all five
+active combinations. The [formulation study](formulation_study.md) covers finer
+spectra, frequency/Q comparisons, antisymmetric KL motion, discretization
+checks, independent timing samples, and peak process memory. Saved arrays and
+metadata are written by the workflows directly.
 
-## Suggested implementation sequence
+Published constant-panel algorithms remain under `hydrodynamics/legacy/` and
+`solvers/legacy/`, with matching example, benchmark, documentation, and test
+folders. Weighted research modules delegate to promoted library code while
+retaining the original experimental drivers and reports.
 
-1. Establish input validation, units, harmonic convention, and reference data
-   from the old implementation. Record reference environment and tolerances.
-2. Implement the plate mesh, stiffness, mass, and boundary conditions in DOLFINx.
-   Check structural eigenfrequencies and convergence against independent cases.
-3. Implement fluid grids and sparse basis evaluation. Verify interpolation,
-   force projection, point loads, cell-edge behavior, and constrained DOFs.
-4. Implement and validate the Stokeslet, panel integration, and the 2D/3D
-   hydrodynamic pressure action. Check regular and singular panels separately.
-5. Implement reusable linear solvers and coupled frequency response. Measure
-   residuals, agreement with reference results, runtime, and peak memory.
-6. Add postprocessing, persistent results, runnable examples, and benchmark
-   studies for the SoftwareX manuscript. Finalize citation and release metadata.
+Python 3.11 is the minimum and `3.0.0.dev0` is a development version. NumPy and
+SciPy are runtime dependencies. Install matched DOLFINx/PETSc/SLEPc separately
+as described in [the plate guide](plate_eigenproblem.md). Matplotlib is optional
+through the `plot` extra; `quadpy` provides the legacy cubature backend. The
+active weighted quadrature defaults to NumPy Gauss rules.
 
 ## Verification
 
@@ -44,30 +35,48 @@ Install development tools in a suitable Python environment:
 python -m pip install -e ".[dev]"
 ```
 
-Run the tests:
+From the repository root, run:
 
 ```console
-python -m pytest
-python -m ruff check src examples benchmarks
+PYTHONPATH=src python -m unittest discover -s tests -t . -v
+python -m ruff check src examples benchmarks tests research
 ```
 
-The tests use `unittest` and can also be collected by
-pytest. Fluid/Sader and input tests run without FEM libraries; FEM tests skip if
-the scientific environment is unavailable. See the plate guide for test cases
-and run instructions. Skipped tests do not count as numerical validation.
+The tests use `unittest` and can also be collected with `python -m pytest`.
+Fluid, coupling algebra, and many postprocessing checks run without FEM.
+Scientific tests skip if the matched FEM environment is unavailable; skipped
+tests do not establish numerical validation. See [the test guide](../tests/README.md).
 
-Add unit tests with their implementation. Integration tests should state their
-scientific-environment requirements. Regression fixtures must have traceable
-provenance; do not populate expected results by running the new implementation
-and comparing it against itself.
+Tests should check numerical behavior against independent formulations,
+analytical results, or physical identities. Integration tests must state their
+environment requirements. Stored regression data need traceable provenance,
+units, tolerances, and generation instructions.
 
-## Examples, benchmarks, and experiments
+## Examples, benchmarks, and research
 
-Example scripts should demonstrate small, reproducible user workflows and state
-the required environment, expected observables, and relevant units.
-Benchmark scripts should record problem sizes, solver options, environment,
-runtime, accuracy, and memory with a clear measurement method.
+Examples should demonstrate reproducible workflows and state required
+dependencies, observables, and units. Benchmarks should record problem sizes,
+solver options, environment, accuracy, runtime, and memory with a clear
+measurement method. Keep published-method comparisons in `legacy` subfolders.
 
-Use `research/` for exploratory algorithms and profiling experiments. Promote
-validated algorithms into the library after their interface and tests are clear.
-Keep the original code as a reference outside this installed package.
+Use `research/` for exploratory quadratures, compression, profiling, and
+derivations. Promote validated reusable algorithms into the library after
+their interface and independent checks are clear. Preserve research evidence
+and historical numerical results; production modules must not import research.
+
+## Deferred roadmap
+
+- Generic configuration/result I/O: design validation and a versioned schema
+  for complex arrays, units, and metadata before adding a public API.
+- Particle loading/detection: add a defined particle model, loading or mass
+  perturbation, and a runnable sensing example.
+- PETSc coupled-solver backend: implement and validate it when parallel or
+  larger coupled problems require it. Existing FEM assembly/eigenproblems
+  already use PETSc; this concerns the reusable response backend.
+- Extended scaling studies: add systematic size/thread/MPI scaling if needed
+  beyond the implemented formulation timing, refinement, and memory study.
+- Full 3D field recovery, fluid-loaded eigenproblems, physical-container input
+  validation, and confirmed citation/release metadata remain future work.
+
+These are planned capabilities, without placeholder modules or empty scripts
+in the active implementation.

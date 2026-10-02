@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from mufsi.coupling.operator import CouplingOperator
+from mufsi.coupling.weighted import WeightedCouplingOperator
 from mufsi.hydrodynamics.base import HydrodynamicModel
 from mufsi.structure.base import StructuralModel
 from mufsi.structure.loads import Load
@@ -19,12 +20,13 @@ class CoupledProblem:
     """Combine structural, hydrodynamic, and coupling components.
 
     An omitted coupling operator is constructed lazily from the structure and
-    fluid grid when solving. No assembly occurs in the constructor.
+    fluid grid or polynomial pressure basis when solving. No assembly occurs
+    in the constructor.
     """
 
     structure: StructuralModel
     hydrodynamics: HydrodynamicModel
-    coupling: CouplingOperator | None = None
+    coupling: CouplingOperator | WeightedCouplingOperator | None = None
 
     def frequency_response(
         self, frequencies: Any, load: Load

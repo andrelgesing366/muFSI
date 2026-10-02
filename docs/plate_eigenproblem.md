@@ -1,8 +1,9 @@
 # Isotropic plate eigenproblem
 
-The first implemented workflow is an in-vacuo homogeneous isotropic
-Kirchhoff–Love plate. Hydrodynamics and coupled frequency response remain
-separate future tasks.
+This guide covers the in-vacuo homogeneous isotropic Kirchhoff–Love plate.
+For the implemented coupled frequency response, see the
+[2D loading guide](f2d_spectrum.md) and
+[weighted 3D loading guide](f3d_spectrum.md).
 
 ## Formulation
 
@@ -71,9 +72,10 @@ Plate configuration is immutable and FEM setup is lazy. New matrix calls return
 caller-owned PETSc matrices; the eigen solver destroys its temporary matrices,
 index sets, vectors, and SLEPc solver. Returned DOLFINx Functions remain usable.
 
-Distributed transverse pressure loading is also implemented, by interpolating
-the load callable into the plate space. Point-load assembly is deferred until
-the shared arbitrary-point basis evaluator is implemented in the coupling layer.
+Distributed transverse pressure loading is implemented by interpolating
+the load callable into the plate space. Serial `PointLoad` and `PointLoads`
+use the shared arbitrary-point basis evaluator and preserve virtual work.
+The [Q-factor guide](qfactor_2d.md) shows corner excitation and postprocessing.
 
 ## Environment and example
 

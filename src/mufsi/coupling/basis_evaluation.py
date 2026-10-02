@@ -4,6 +4,28 @@ import numpy as np
 from scipy import sparse
 
 
+def point_force_values(function_space, load):
+    """Project one or several point forces by virtual work: F = E.T @ forces.
+
+    Returns full serial DOF values. Scalar conversion and displacement boundary
+    conditions remain the responsibility of the structural assembler.
+    """
+    from mufsi.structure.loads import PointLoad, PointLoads
+
+    if not isinstance(load, (PointLoad, PointLoads)):
+        raise TypeError("Use PointLoad or PointLoads.")
+    loads = (load,) if isinstance(load, PointLoad) else load.loads
+    positions = np.asarray([item.position for item in loads], dtype=float)
+    amplitudes = np.asarray([item.amplitude for item in loads], dtype=complex)
+    dim = function_space.mesh.geometry.dim
+    if positions.shape != (len(loads), dim) or not np.isfinite(positions).all():
+        raise ValueError(f"Point positions must contain {dim} finite coordinates.")
+    if amplitudes.shape != (len(loads),) or not np.isfinite(amplitudes).all():
+        raise ValueError("Point amplitudes must be finite scalars.")
+    evaluation = build_evaluation_matrix(function_space, positions)
+    return np.asarray(evaluation.T @ amplitudes).ravel()
+
+
 def build_evaluation_matrix(function_space, points):
     """Build CSR E with E[i,j] = phi_j(points[i]) on a serial DOLFINx mesh.
 
@@ -31,7 +53,7 @@ def build_evaluation_matrix(function_space, points):
     if not np.isfinite(p).all():
         raise ValueError("points must be finite.")
     xyz = np.zeros((len(p), 3), dtype=p.dtype)
-    xyz[:, :p.shape[1]] = p
+    xyz[:, : p.shape[1]] = p
     diameter = np.ptp(mesh.geometry.x, axis=0).max()
     tree = geometry.bb_tree(mesh, mesh.topology.dim, padding=1e-12 * diameter)
     candidates = geometry.compute_collisions_points(tree, xyz)
@@ -43,12 +65,15 @@ def build_evaluation_matrix(function_space, points):
             raise ValueError(f"Point {i} lies outside the structural mesh.")
         cell = int(cells[0])
         cell_geometry = mesh.geometry.x[mesh.geometry.dofmap[cell]]
-        X = mesh.geometry.cmap.pull_back(point[None, :mesh.geometry.dim], cell_geometry)
+        X = mesh.geometry.cmap.pull_back(
+            point[None, : mesh.geometry.dim], cell_geometry
+        )
         phi = element.tabulate(0, X)[0, 0, :, 0]
         dofs = V.dofmap.cell_dofs(cell)
         rows.extend([i] * len(dofs))
         cols.extend(dofs)
         values.extend(phi)
     return sparse.csr_matrix(
-        (values, (rows, cols)), shape=(len(p), V.dofmap.index_map.size_local),
+        (values, (rows, cols)),
+        shape=(len(p), V.dofmap.index_map.size_local),
     )

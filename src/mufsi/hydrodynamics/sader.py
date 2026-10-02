@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.polynomial.polynomial import polyval
+from scipy.optimize import brentq
 from scipy.special import kve
 
 from mufsi.models.fluid import Fluid
@@ -28,16 +29,51 @@ def gamma_function(reynolds):
     z = -1j * root
     circular = 1 + 4j * kve(1, z) / (root * kve(0, z))
     t = np.log10(re)
-    real = polyval(t, [
-        .91324, -.48274, .46842, -.12886, .044055, -.0035117, .00069085,
-    ]) / polyval(t, [
-        1, -.56964, .48690, -.13444, .045155, -.0035862, .00069085,
-    ])
-    imag = polyval(t, [
-        -.024134, -.029256, .016294, -.00010961, .000064577, -.000044510,
-    ]) / polyval(t, [
-        1, -.59702, .55182, -.18357, .079156, -.014369, .0028361,
-    ])
+    real = polyval(
+        t,
+        [
+            0.91324,
+            -0.48274,
+            0.46842,
+            -0.12886,
+            0.044055,
+            -0.0035117,
+            0.00069085,
+        ],
+    ) / polyval(
+        t,
+        [
+            1,
+            -0.56964,
+            0.48690,
+            -0.13444,
+            0.045155,
+            -0.0035862,
+            0.00069085,
+        ],
+    )
+    imag = polyval(
+        t,
+        [
+            -0.024134,
+            -0.029256,
+            0.016294,
+            -0.00010961,
+            0.000064577,
+            -0.000044510,
+        ],
+    ) / polyval(
+        t,
+        [
+            1,
+            -0.59702,
+            0.55182,
+            -0.18357,
+            0.079156,
+            -0.014369,
+            0.0028361,
+        ],
+    )
     return (real + 1j * imag) * circular
 
 
@@ -54,7 +90,7 @@ def _static_inverse(coefficients):
 
 def _uniform_transfer(b4, r):
     """Solve w'''' - b4*w = 1, w(0)=w'(0)=w''(1)=w'''(1)=0."""
-    b = complex(b4)**0.25
+    b = complex(b4) ** 0.25
     if abs(b) < 0.5:
         # Neumann series about the exact static solution avoids 1/b^4 cancellation.
         c = _static_inverse(np.array([1.0]))
@@ -68,16 +104,22 @@ def _uniform_transfer(b4, r):
     e = np.exp(-b)
     cb, sb = np.cos(b), np.sin(b)
     # Bounded real exponentials avoid the large cosh/sinh terms in Eq. (B4).
-    system = np.array([
-        [1, 0, 1, e],
-        [0, 1, -1, e],
-        [-cb, -sb, e, 1],
-        [sb, -cb, -e, 1],
-    ], dtype=complex)
+    system = np.array(
+        [
+            [1, 0, 1, e],
+            [0, 1, -1, e],
+            [-cb, -sb, e, 1],
+            [sb, -cb, -e, 1],
+        ],
+        dtype=complex,
+    )
     c = np.linalg.solve(system, np.array([1 / b4, 0, 0, 0], dtype=complex))
     value = (
-        c[0] * np.cos(b * r) + c[1] * np.sin(b * r)
-        + c[2] * np.exp(-b * r) + c[3] * np.exp(-b * (1 - r)) - 1 / b4
+        c[0] * np.cos(b * r)
+        + c[1] * np.sin(b * r)
+        + c[2] * np.exp(-b * r)
+        + c[3] * np.exp(-b * (1 - r))
+        - 1 / b4
     )
     value[r == 0] = 0
     return value
@@ -98,9 +140,13 @@ class SaderMethod:
 
     def __post_init__(self):
         values = [
-            self.geometry.length, self.geometry.width, self.geometry.thickness,
-            self.material.young_modulus, self.material.density,
-            self.fluid.density, self.fluid.dynamic_viscosity,
+            self.geometry.length,
+            self.geometry.width,
+            self.geometry.thickness,
+            self.material.young_modulus,
+            self.material.density,
+            self.fluid.density,
+            self.fluid.dynamic_viscosity,
         ]
         if not np.isfinite(values).all() or min(values) <= 0:
             raise ValueError("Sader geometry and physical parameters must be positive.")
@@ -108,8 +154,10 @@ class SaderMethod:
     @property
     def flexural_rigidity(self):
         return (
-            self.material.young_modulus * self.geometry.width
-            * self.geometry.thickness**3 / 12
+            self.material.young_modulus
+            * self.geometry.width
+            * self.geometry.thickness**3
+            / 12
         )
 
     def hydrodynamic_function(self, frequencies):
@@ -118,10 +166,58 @@ class SaderMethod:
         if not np.isfinite(f).all() or np.any(f <= 0):
             raise ValueError("frequencies must be finite and strictly positive.")
         re = (
-            self.fluid.density * 2 * np.pi * f * self.geometry.width**2
+            self.fluid.density
+            * 2
+            * np.pi
+            * f
+            * self.geometry.width**2
             / (4 * self.fluid.dynamic_viscosity)
         )
         return gamma_function(re).conjugate()
+
+    def quality_factor(self, frequencies):
+        """Sader (1998) Eq. (35), evaluated at a loaded undamped frequency.
+
+        Q = (4*rho_s*t/(pi*rho_f*W) + Gamma_real) / Gamma_imag.
+        The paper uses exp(-i omega t); library Gamma has negative imaginary
+        part. This local SHO approximation is most accurate for Q >> 1.
+        """
+        gamma = self.hydrodynamic_function(frequencies)
+        ratio = (
+            4
+            * self.material.density
+            * self.geometry.thickness
+            / (np.pi * self.fluid.density * self.geometry.width)
+        )
+        return (ratio + gamma.real) / (-gamma.imag)
+
+    def resonance_and_q(self, vacuum_frequencies):
+        """Solve Eq. (33) for loaded f0 and evaluate Eq. (35), without fitting.
+
+        Accept positive scalar or array vacuum flexural frequencies in Hz.
+        Returns (loaded frequencies in Hz, Q) with the input shape.
+        """
+        vacuum = np.asarray(vacuum_frequencies, dtype=float)
+        if not np.isfinite(vacuum).all() or np.any(vacuum <= 0):
+            raise ValueError("Vacuum frequencies must be finite and positive.")
+        ratio = (
+            np.pi
+            * self.fluid.density
+            * self.geometry.width
+            / (4 * self.material.density * self.geometry.thickness)
+        )
+
+        def loaded(fvac):
+            def balance(f):
+                gamma = self.hydrodynamic_function(f)
+                return (f / fvac) ** 2 * (1 + ratio * gamma.real) - 1
+
+            return brentq(balance, fvac * 1e-8, fvac, xtol=fvac * 1e-12, rtol=1e-12)
+
+        frequencies = np.array([loaded(f) for f in vacuum.ravel()]).reshape(
+            vacuum.shape
+        )
+        return frequencies, self.quality_factor(frequencies)
 
     def displacement_per_line_force(self, frequencies, positions=None):
         """Compliance (m/(N/m)), shape (nfrequencies, npositions).
@@ -130,9 +226,12 @@ class SaderMethod:
         tip. Scalar frequencies/positions are treated as one-element arrays.
         """
         f = np.atleast_1d(np.asarray(frequencies, dtype=float))
-        x = np.atleast_1d(np.asarray(
-            self.geometry.length if positions is None else positions, dtype=float,
-        ))
+        x = np.atleast_1d(
+            np.asarray(
+                self.geometry.length if positions is None else positions,
+                dtype=float,
+            )
+        )
         if f.ndim != 1 or x.ndim != 1 or f.size == 0 or x.size == 0:
             raise ValueError("frequencies and positions must be nonempty 1D arrays.")
         if not np.isfinite(x).all() or np.any((x < 0) | (x > self.geometry.length)):
@@ -143,12 +242,13 @@ class SaderMethod:
         line_mass = self.material.density * g.width * g.thickness
         fluid_mass = np.pi * self.fluid.density * g.width**2 / 4 * gamma
         b4 = omega**2 * g.length**4 / self.flexural_rigidity * (line_mass + fluid_mass)
-        return np.array([
-            _uniform_transfer(b, x / g.length) for b in b4
-        ]) * (g.length**4 / self.flexural_rigidity)
+        return np.array([_uniform_transfer(b, x / g.length) for b in b4]) * (
+            g.length**4 / self.flexural_rigidity
+        )
 
     def displacement_per_pressure(self, frequencies, positions=None):
         """Compliance in m/Pa for uniform pressure, with the same output shape."""
         return self.geometry.width * self.displacement_per_line_force(
-            frequencies, positions,
+            frequencies,
+            positions,
         )

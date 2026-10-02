@@ -1,7 +1,7 @@
 """Interface for structural discretizations.
 
-Array and matrix annotations use Any until the numerical backends are chosen.
-DOLFINx objects will be created by concrete implementations, never at import.
+Concrete models construct DOLFINx objects lazily, never at import. Backend
+object annotations use Any so the interface imports without the FEM runtime.
 """
 
 from abc import ABC, abstractmethod
@@ -15,13 +15,13 @@ class StructuralModel(ABC):
 
     @property
     def mesh(self) -> Any:
-        """Return the structural mesh once mesh construction is implemented."""
-        raise NotImplementedError("Structural mesh construction is pending.")
+        """Return the concrete model's structural mesh."""
+        raise NotImplementedError("Structural models must provide a mesh.")
 
     @property
     def function_space(self) -> Any:
         """Return the FEM space used for structural displacement."""
-        raise NotImplementedError("Structural function-space setup is pending.")
+        raise NotImplementedError("Structural models must provide a function space.")
 
     @property
     def constrained_dofs(self) -> Any:

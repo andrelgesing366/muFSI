@@ -15,7 +15,7 @@ from typing import Any
 from mufsi.models.geometry import PlateGeometry
 from mufsi.models.material import Material
 from mufsi.structure.base import StructuralModel
-from mufsi.structure.loads import DistributedLoad, Load
+from mufsi.structure.loads import DistributedLoad, Load, PointLoad, PointLoads
 
 
 def _backend() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -82,11 +82,18 @@ class KirchhoffPlate(StructuralModel):
         ):
             raise ValueError("C0 interior penalty requires element_degree >= 2.")
         if self.boundary_condition not in {
-            "cantilever", "bridge", "clamped", "simply_supported"
+            "cantilever",
+            "bridge",
+            "clamped",
+            "simply_supported",
         }:
             raise ValueError("Unknown plate boundary_condition.")
         if self.diagonal not in {
-            "crossed", "left", "right", "left_right", "right_left"
+            "crossed",
+            "left",
+            "right",
+            "left_right",
+            "right_left",
         }:
             raise ValueError("Unknown triangular mesh diagonal pattern.")
 
@@ -94,7 +101,8 @@ class KirchhoffPlate(StructuralModel):
     def bending_rigidity(self) -> float:
         """Return D = E t^3 / (12 (1 - nu^2)), in N m."""
         return (
-            self.material.young_modulus * self.geometry.thickness**3
+            self.material.young_modulus
+            * self.geometry.thickness**3
             / (12.0 * (1.0 - self.material.poisson_ratio**2))
         )
 
@@ -138,7 +146,8 @@ class KirchhoffPlate(StructuralModel):
             if self.boundary_condition == "bridge":
                 return left | right
             return (
-                left | right
+                left
+                | right
                 | np.isclose(x[1], -g.width / 2, atol=atol, rtol=0.0)
                 | np.isclose(x[1], g.width / 2, atol=atol, rtol=0.0)
             )
@@ -155,7 +164,8 @@ class KirchhoffPlate(StructuralModel):
         """Local supported displacement indices, including ghost DOFs."""
         _, _, fem, _, _, _ = _backend()
         return fem.locate_dofs_topological(
-            self.function_space, self.mesh.topology.dim - 1,
+            self.function_space,
+            self.mesh.topology.dim - 1,
             self.boundary_tags.find(1),
         )
 
@@ -163,9 +173,11 @@ class KirchhoffPlate(StructuralModel):
     def boundary_conditions(self) -> tuple[Any, ...]:
         """Homogeneous displacement Dirichlet condition; slope is in the form."""
         _, _, fem, _, _, PETSc = _backend()
-        return (fem.dirichletbc(
-            PETSc.ScalarType(0), self.constrained_dofs, self.function_space
-        ),)
+        return (
+            fem.dirichletbc(
+                PETSc.ScalarType(0), self.constrained_dofs, self.function_space
+            ),
+        )
 
     @cached_property
     def stiffness_form(self) -> Any:
@@ -212,8 +224,7 @@ class KirchhoffPlate(StructuralModel):
         u = ufl.TrialFunction(self.function_space)
         v = ufl.TestFunction(self.function_space)
         return fem.form(
-            self.surface_density * ufl.inner(u, v)
-            * ufl.Measure("dx", domain=self.mesh)
+            self.surface_density * ufl.inner(u, v) * ufl.Measure("dx", domain=self.mesh)
         )
 
     def stiffness_matrix(self) -> Any:
@@ -235,23 +246,19 @@ class KirchhoffPlate(StructuralModel):
         return matrix
 
     def force_vector(self, load: Load) -> Any:
-        """Assemble distributed pressure loading and zero supported entries.
+        """Assemble pressure [Pa] or serial point forces [N].
 
         The callable is interpolated into the FEM space, with values in N/m^2.
-        Point loads await the shared arbitrary-point basis evaluator.
+        Point forces use the shared basis evaluator and preserve virtual work.
         The returned ghosted PETSc vector belongs to the caller.
         """
-        if not isinstance(load, DistributedLoad):
-            raise NotImplementedError(
-                "Point loading requires the planned basis-evaluation component."
-            )
         np, ufl, fem, _, _, PETSc = _backend()
         from dolfinx.fem.petsc import assemble_vector, set_bc
 
-        pressure = fem.Function(self.function_space)
-
-        def values(x: Any) -> Any:
-            data = np.asarray(load.values(x))
+        def scalar_values(data: Any) -> Any:
+            data = np.asarray(data)
+            if not np.isfinite(data).all():
+                raise ValueError("Load values must be finite.")
             is_real = not np.issubdtype(PETSc.ScalarType, np.complexfloating)
             if np.iscomplexobj(data) and is_real:
                 if np.any(data.imag != 0):
@@ -259,13 +266,24 @@ class KirchhoffPlate(StructuralModel):
                 data = data.real
             return np.asarray(data, dtype=PETSc.ScalarType)
 
-        pressure.interpolate(values)
-        pressure.x.scatter_forward()
         v = ufl.TestFunction(self.function_space)
-        form = fem.form(
-            ufl.inner(pressure, v) * ufl.Measure("dx", domain=self.mesh)
-        )
-        vector = assemble_vector(form)
+        dx = ufl.Measure("dx", domain=self.mesh)
+        if isinstance(load, DistributedLoad):
+            pressure = fem.Function(self.function_space)
+            pressure.interpolate(
+                lambda x: np.broadcast_to(scalar_values(load.values(x)), (x.shape[1],))
+            )
+            pressure.x.scatter_forward()
+            vector = assemble_vector(fem.form(ufl.inner(pressure, v) * dx))
+        elif isinstance(load, (PointLoad, PointLoads)):
+            from mufsi.coupling.basis_evaluation import point_force_values
+
+            values = scalar_values(point_force_values(self.function_space, load))
+            zero = fem.Constant(self.mesh, PETSc.ScalarType(0))
+            vector = assemble_vector(fem.form(ufl.inner(zero, v) * dx))
+            vector.getArray()[:] = values
+        else:
+            raise TypeError("Use DistributedLoad, PointLoad or PointLoads.")
         vector.ghostUpdate(
             addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE
         )

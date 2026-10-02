@@ -2,11 +2,18 @@
 
 Viscous fluid-structure interaction for micro- and nanomechanical resonators.
 This repository contains the µFSI v3 rewrite and its planned SoftwareX examples.
-The isotropic DOLFINx Kirchhoff–Love plate and in-vacuo SLEPc eigen solver are
-implemented, together with F2D and adaptive F3D fluid formulations, sparse
-plate/fluid coupling, driven response, and Sader reference. The Euler-Bernoulli
-beam, in-vacuo beam eigen workflow and local Sader/Tuck fluid-force models are
-also implemented. Postprocessing and generic I/O remain placeholders.
+The package implements DOLFINx Euler-Bernoulli beams and Kirchhoff-Love plates,
+dry eigenproblems, weighted polynomial 3D Stokes loading for both structures,
+2D section loading, and Sader loading for beams. SHO and energy Q postprocessing
+work with each active combination. Field recovery currently uses the 2D
+approximation, including for displacement obtained with 3D/Sader loading.
+Examples save their numerical arrays and metadata directly; a generic I/O API
+is deferred.
+
+Run `examples/formulation_comparison.py` in the matched scientific environment
+for compact displacement spectra and Q-versus-frequency plots covering all five
+active combinations. See [the 3D/Q guide](docs/f3d_spectrum.md). Previous published
+panel methods remain available in `mufsi.hydrodynamics.legacy`.
 
 ## Repository layout
 
@@ -31,38 +38,35 @@ muFSI/
 │       │   ├── base.py
 │       │   ├── grid.py
 │       │   ├── quadrature.py
-│       │   ├── panel_quadrature.py
 │       │   ├── stokeslet.py
 │       │   ├── stokes_2d.py
 │       │   ├── sader.py
 │       │   ├── section_force.py
 │       │   ├── stokes_3d.py
-│       │   └── kernels.py
+│       │   ├── weighted_pressure.py
+│       │   └── legacy/          # Published constant-panel models and helpers
 │       ├── coupling/
 │       │   ├── basis_evaluation.py
-│       │   └── operator.py
+│       │   ├── operator.py
+│       │   └── weighted.py
 │       ├── solvers/
 │       │   ├── problem.py
 │       │   ├── linear.py
 │       │   ├── frequency_response.py
 │       │   ├── beam_frequency_response.py
-│       │   └── eigen.py
-│       ├── postprocessing/
-│       │   ├── qfactor.py
-│       │   ├── modes.py
-│       │   └── flow.py
-│       └── io/
-│           ├── config.py
-│           └── results.py
-├── tests/                 # Unit, integration, and analytical regression tests
-├── examples/              # Plate eigen and F2D/F3D/Sader workflows
-├── benchmarks/            # Future accuracy, runtime, and memory studies
-├── docs/                  # Architecture and development notes
+│       │   ├── eigen.py
+│       │   └── legacy/          # Analytic panel response adapter
+│       └── postprocessing/
+│           ├── qfactor.py
+│           └── flow.py
+├── tests/                 # Unit, FEM, and analytical checks; legacy subfolders
+├── examples/              # EB/KL eigen, spectra, Q and flow; legacy subfolder
+├── benchmarks/            # Formulation study and preserved legacy benchmarks
+├── docs/                  # Current guides and legacy reference guides
 └── research/              # Experiments outside the installed package
 ```
 
-Each package folder contains an `__init__.py`. The existing root-level
-`Test_gpt.py` and `test.py` remain as blank permission-check files.
+Each package folder contains an `__init__.py`.
 
 ## Architecture
 
@@ -72,8 +76,7 @@ Each package folder contains an `__init__.py`. The existing root-level
 - `coupling`: structural basis evaluation at fluid points and force projection.
 - `solvers`: linear algebra backends, coupled problems, frequency response,
   and structural eigenproblems.
-- `postprocessing`: resonance/Q extraction, mode evaluation, and flow recovery.
-- `io`: configuration and result persistence.
+- `postprocessing`: resonance/Q extraction and 2D flow recovery.
 
 The structural and coupling implementations own the DOLFINx interaction.
 The fluid layer operates on numerical arrays independently of DOLFINx.
@@ -83,6 +86,9 @@ from the physics. CPU execution is the initial target.
 
 See [the architecture notes](docs/architecture.md) for the interfaces and
 [the development notes](docs/development.md) for the implementation sequence.
+The preserved [legacy padded multigrid F3D method](docs/legacy/stokeslet_multigrid.md) provides
+edge-refined pressure panels, exact cell-area coupling weights, and runnable
+pressure/spectrum comparisons against analytic and Quadpy integration.
 
 ## Running the library
 
@@ -117,12 +123,18 @@ full 200-frequency spectrum and export complex fields, CSV data, and a plot.
 `--quick` uses a smaller grid and mesh. Coupled fluid solves currently use one
 MPI rank. Install the `plot` extra for plotting.
 
-The adaptive F3D workflow is described in [the 3D fluid guide](docs/f3d_spectrum.md).
-Run `examples/plate_3d.py --quick` for a 6x12 fluid grid, or use the default
-12x24 grid to compare slender and wide plates. The script caps fluid counts at
-32x64 and saves both spectra, complex fields and quadrature reports. Install
-the optional `quadpy` extra for the legacy cubature rules, or select
-`--quadrature gauss` for NumPy quadrature.
+The weighted-pressure F3D workflow is described in [the 3D fluid guide](docs/f3d_spectrum.md).
+Run `examples/formulation_comparison.py` for a compact EB/KL comparison,
+including displacement spectra, Q factors, and a 2D field reconstruction.
+`examples/plate_3d.py` selects the two KL formulations. Published panel methods
+and their original broad spectrum example are retained under `legacy`.
+
+The [extensive study guide](docs/formulation_study.md) describes the finer
+frequency comparisons for 800×50, 500×50, and 500×250 µm cantilevers.
+`benchmarks/formulation_study.py` runs spectra, numerical refinement,
+antisymmetric plate loading, and independent runtime benchmarks.
+`examples/formulation_spectra.py` regenerates the PNG/PDF figures and report
+from saved results without rerunning the expensive solves.
 
 The [beam guide](docs/beam_cantilever.md) describes the port from the 1D
 cantilever folders. Run `examples/beam_eigenvalue_problem.py --plot` for six
@@ -130,9 +142,22 @@ vacuum modes with analytical comparison, and `examples/beam_2d.py` for FEM
 with local Sader/Tuck forces. The latter uses 64 transverse panels by default;
 `--quick` uses 16. These beam examples do not require Quadpy.
 
-Other examples and benchmarks remain placeholders. Tests cover structural
-analytical results, the F2D kernel, Sader compliance, basis transfer, virtual
-work, adaptive regular/singular F3D panels, and coupled block/Schur solves.
+The [Q-factor guide](docs/qfactor_2d.md) describes symmetric/antisymmetric
+corner excitation, SHO fits, energy Q and the Sader reference. Run
+`examples/qfactor_2d.py` for the first three flexural resonances of a slender
+silicon cantilever in water, or use `--quick` for one resonance. It saves
+comparison data, complex responses and a figure.
+
+The [2D flow guide](docs/flow_2d.md) describes field recovery and phase plots.
+Run `examples/flow_visualization.py` for a prescribed roof-tile displacement,
+or pass `--response results/cantilever_2d/response.npz --frequency 100000`
+to postprocess a saved F2D pressure solution without rerunning FEM.
+
+Tests cover structural analytical results, the F2D kernel, Sader compliance,
+weighted coefficient mobility and force projection, basis transfer, virtual
+work, Q and field recovery, and coupled block/Schur solves. Legacy subfolders
+retain the constant-panel integration and response checks. See
+[the test guide](tests/README.md) and [the development roadmap](docs/development.md).
 
 Only `src/mufsi/` is included in the installed package. The public API is exposed
 through `mufsi.__init__` and remains provisional during the rewrite.

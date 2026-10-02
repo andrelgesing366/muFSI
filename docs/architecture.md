@@ -1,11 +1,10 @@
 # Architecture
 
-The installed package lives under `src/mufsi/`. The repository name is `muFSI`;
-the Python import name is `mufsi`. The isotropic plate and in-vacuo eigen solver
-are implemented, together with F2D, adaptive F3D, Sader, and serial coupled
-response.
-Euler-Bernoulli beam assembly and local Sader/Tuck line-force response are also
-implemented. Other skeleton components reserve interfaces for the rewrite.
+The installed package lives under `src/mufsi/`; the Python import name is
+`mufsi`. The active formulations are Euler–Bernoulli (EB) and Kirchhoff–Love
+(KL) structures with weighted polynomial 3D Stokes loading or 2D section
+loading, plus EB with Sader loading. Each supports displacement spectra and
+SHO/energy Q. Fluid field recovery currently uses the 2D approximation.
 
 ## Responsibilities and interfaces
 
@@ -13,94 +12,98 @@ implemented. Other skeleton components reserve interfaces for the rewrite.
 | --- | --- | --- |
 | `models` | Physical data in SI units | `PlateGeometry`, `BeamGeometry`, `Material`, `Fluid` |
 | `structure` | FEM mesh, stiffness, mass, and loading | `StructuralModel`, `KirchhoffPlate`, `EulerBernoulliBeam` |
-| `hydrodynamics` | Fluid discretization and pressure solution | `FluidGrid`, `HydrodynamicModel`, `Stokes2D`, `Stokes3D` |
-| `coupling` | Structural basis evaluation and force projection | `build_evaluation_matrix`, `CouplingOperator` |
-| `solvers` | Numerical backends and problem orchestration | `LinearSolver`, `CoupledProblem`, `FrequencyResponseSolver`, `EigenSolver` |
-| `postprocessing` | Observables and field recovery | `q_factor`, `resonance_frequency`, `evaluate_mode`, `reconstruct_flow` |
-| `io` | Validated configuration and result storage | `read_config`, `save_results`, `load_results` |
+| `hydrodynamics` | Fluid discretization and resisting traction | `FluidGrid`, `HydrodynamicModel`, `Stokes2D`, `Stokes3D`, `SectionForce2D` |
+| `coupling` | Structural evaluation and integrated force projection | `build_evaluation_matrix`, `CouplingOperator`, `WeightedCouplingOperator` |
+| `solvers` | Linear algebra, coupled response, and dry eigenproblems | `LinearSolver`, `SciPyLUSolver`, `CoupledProblem`, `FrequencyResponseSolver`, `BeamFrequencyResponseSolver`, `EigenSolver` |
+| `postprocessing` | Resonance/Q and 2D field recovery | `fit_sho`, `analyze_q_factor`, `energy_from_response`, `reconstruct_flow_from_response` |
 
-The models contain data and elementary derived properties. The structure layer
-handles DOLFINx assembly. The coupling layer uses DOLFINx/Basix only to
-build the basis-evaluation operator. Once built, the coupling operator and the
-fluid models will work with arrays and sparse matrices. Optional numerical
-FEM libraries are loaded on use; NumPy and SciPy are runtime dependencies.
+The structure layer owns DOLFINx assembly. Coupling uses DOLFINx/Basix to
+evaluate structural basis functions and integrate pressure forces; its
+assembled operators act on arrays and sparse matrices. Fluid integration is
+independent of DOLFINx. FEM libraries are loaded on use; NumPy and SciPy are
+runtime dependencies. Coupled fluid response currently requires one MPI rank.
 
-`SectionForce2D` is the local beam variant of the fluid layer. It returns
-resisting force per unit length using rigid transverse motion, with either
-Sader or numerical Tuck loading. `BeamFrequencyResponseSolver` projects that
-force with the consistent beam line-integration matrix. It has a line-force
-contract rather than the plate pressure-grid contract below; see
-[the beam guide](beam_cantilever.md).
+## Coupling contracts
 
-## Coupling contract
-
-Let `u` contain structural DOFs, and let the rows of sparse `E` correspond to
-fluid collocation points:
+For sampled 2D pressure, `CouplingOperator` uses structural evaluation E and
+fluid area weights Q:
 
 ```text
-E[i, j] = phi_j(x_i)
+E[i,j] = phi_j(fluid_point_i)
 fluid motion = E @ u
-resisting force = E.T @ (weights * pressure)
+resisting structural force = E.T @ (Q * pressure)
 ```
 
-The basis-evaluation routine locates cells, maps physical points to reference
-coordinates, and evaluates scalar basis functions. It builds columns in serial
-structural DOF order, without a second FEM mesh.
+`SectionForce2D` provides an EB line-force contract with rigid transverse
+motion. It computes either Sader or numerical Tuck loading.
+`BeamFrequencyResponseSolver` projects force per unit length using consistent
+beam integration. See [the beam guide](beam_cantilever.md) and
+[the 2D plate guide](f2d_spectrum.md) for ordering, units, and boundary points.
 
-Point ordering, constraints, boundary-point behavior, and pressure signs are
-specified in [the F2D guide](f2d_spectrum.md). Coupling currently requires one
-MPI rank. The implemented coupling describes transverse plate motion; beam/fluid
-mapping details will be defined before adding a coupled beam example.
+Weighted 3D pressure coefficients require a separate force integral:
 
-## Fluid contract
-
-The primary operation is:
-
-```python
-pressure = hydrodynamics.pressure_from_velocity(omega, velocity)
+```text
+p(x,y) = sum a[k] * psi_k(x,y)
+H a ~= i*omega*E*u
+C[j,k] = integral phi_j(x,y)*psi_k(x,y) dA
+(K-omega^2*M) u + C a = F
 ```
 
-`omega` is angular frequency in rad/s, velocity is in m/s, and pressure is in Pa.
-Velocity, pressure, and weights share x-major grid ordering. Positive pressure
-is resisting traction with exp(+i omega t). Stokes2D is validated against the
-old Kelvin formula and Sader rigid-section impedance.
+`Stokes3D` builds the continuous Chebyshev pressure basis with square-root edge
+weights. Cosine coordinates remove those weights; Duffy quadrature treats the
+coincident Stokeslet singularity. `weighted_pressure.py` contains the reusable
+basis and mobility integration. EB uses x-only structural evaluation and even
+transverse pressure degrees; KL uses both coordinates and even/odd degrees.
+`WeightedCouplingOperator` integrates C independently of collocation E.
+Multiplying sampled singular pressure by collocation areas does not replace
+this integral. See [the weighted 3D guide](f3d_spectrum.md).
 
-`assemble_matrix(omega)` is an optional inspection method. The coupled problem
-can use the fluid action without requiring a dense hydrodynamic matrix.
-F2D additionally provides a sparse mobility for a displacement/pressure block
-solve. F3D assembles dense mobility with adaptive regular/singular panel
-integration and uses an exact fluid Schur solve, processing structural RHSs
-in bounded batches. See [the F3D guide](f3d_spectrum.md) for its tolerance,
-grid, memory, and Quadpy/Gauss backends. Backends may reuse factorizations and
-process multiple right-hand sides in blocks, or support iterative/operator
-approaches. Dense assembly can still be a
-useful reference for small problems. Explicit matrix inversion is unnecessary.
+## Fluid and solver contracts
 
-The `LinearSolver` abstraction lives in `solvers/linear.py` and can be shared by
-fluid and structural implementations. Physics modules do not depend on the
-coupled problem or the frequency-response workflow.
+The common fluid action is
+`pressure_from_velocity(omega, velocity)`, with angular frequency in rad/s,
+velocity in m/s, and pressure in Pa. The convention is `exp(+i omega t)`;
+positive pressure is resisting traction. `assemble_matrix` is optional and
+its normalization is model-specific: Stokes2D returns a sampled-pressure
+mobility, while Stokes3D returns a rectangular coefficient mobility.
 
-## Coupled and eigen solvers
+`CoupledProblem.frequency_response(frequencies, load)` accepts frequencies in
+Hz and an explicit drive. `FrequencyResponseSolver` retains full structural
+DOFs. It uses a sparse block solve for 2D loading and a pressure-coefficient
+Schur solve for weighted 3D loading, with a scaled joint fallback at dry poles.
+`BeamFrequencyResponseSolver` handles local EB section forces. Linear algebra
+interfaces live in `solvers/linear.py`; the available backend is SciPy LU.
 
-`CoupledProblem` stores the structure, hydrodynamics, and an optional coupling
-operator. Its `frequency_response(frequencies, load)` method accepts Hz
-and an explicit driving load. The lower-level `FrequencyResponseSolver` handles
-conversion to angular frequency and orchestration at each frequency.
+`EigenSolver` solves the dry generalized eigenproblem with SLEPc, eliminating
+supported displacement DOFs and returning mass-normalized modes and physical
+residuals. See [the plate guide](plate_eigenproblem.md). Frequency-dependent
+fluid-loaded eigenproblems remain a separate future formulation.
 
-`EigenSolver` solves the in-vacuo structural generalized eigenproblem using
-SLEPc, eliminating supported displacement DOFs from both matrices and returning
-mass-normalized DOLFINx functions and residual errors. See
-[the plate guide](plate_eigenproblem.md). A fluid-loaded eigenproblem with
-frequency-dependent hydrodynamics requires a separate formulation.
+## Q and field recovery
 
-## Public and internal code
+Response objects retain full displacement and model-specific fluid data.
+Weighted 3D responses include coefficients, sampled pressure, and integrated
+resisting FE forces. SHO Q fits an isolated, resolved displacement resonance;
+energy Q uses structural bending-plus-kinetic energy and the model's work per
+cycle. Weighted pressure work uses C*a. No stored fluid energy is added.
+
+`reconstruct_flow_from_response` evaluates structural velocity on a separate
+2D grid and solves Stokes2D to recover streamfunction, velocity, strain, and
+dissipation. This remains a 2D approximation when displacement comes from 3D
+or Sader loading. Its dissipation does not replace model-specific work for Q.
+
+## Public code, references, and workflows
 
 The provisional convenience API is listed in `mufsi.__all__`. Specialist
-interfaces remain accessible through their modules. Internal panel-integral
-functions in `hydrodynamics/stokeslet.py` and `panel_quadrature.py` use leading
-underscores so the numerical implementation can evolve without making them
-part of the convenience API.
-`kernels.py` reserves future general analytical panel reductions.
+interfaces remain available through their modules. Constant-panel Quadpy,
+analytic, multigrid, and hybrid methods and their grid/integration helpers are
+preserved under `hydrodynamics/legacy/`; their analytic response adapter lives
+under `solvers/legacy/`. Matching examples, benchmarks, documentation, and
+tests have `legacy` subfolders. Shared active numerical helpers remain outside
+those folders. See [the legacy panel guide](legacy/f3d_spectrum.md).
 
-Only the library package is installed. Tests, examples, benchmarks, and research
-scripts remain outside it. Production code must never import from `research/`.
+Only the library package is installed. Examples demonstrate workflows;
+`benchmarks/formulation_study.py` performs numerical refinement and measured
+comparisons. Examples currently save arrays and metadata directly. Research
+contains derivations, experiments, and compatibility imports into promoted
+library code; production code must never import from `research/`.

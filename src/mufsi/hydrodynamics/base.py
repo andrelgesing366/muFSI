@@ -3,20 +3,19 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from mufsi.hydrodynamics.grid import FluidGrid
 from mufsi.models.fluid import Fluid
 
 
 class HydrodynamicModel(ABC):
-    """Map transverse fluid-grid velocity to pressure.
+    """Map transverse collocation velocity to sampled pressure.
 
-    omega is angular frequency in rad/s. Grid point ordering must be shared by
-    velocities, pressures, and integration weights. The implementation may use
+    omega is angular frequency in rad/s. Each model documents its collocation
+    ordering. Panel models supply a FluidGrid; coefficient models supply their
+    pressure basis and independent integrated force projection. They may use
     dense, blocked, iterative, or matrix-free linear algebra.
     """
 
     fluid: Fluid
-    grid: FluidGrid
 
     @abstractmethod
     def pressure_from_velocity(self, omega: float, velocity: Any) -> Any:
